@@ -1,16 +1,22 @@
-"""pyesm command-line interface (stdlib argparse for fast cold start).
-
-Heavy modules (resolve/crawl/vendor/network) are imported lazily inside the
-command handlers so the CLI stays cheap to start.
-"""
+"""pyesm command-line interface (stdlib argparse)."""
 
 from __future__ import annotations
 
 import argparse
+import asyncio
+import re
+import shutil
 import sys
 
-from . import __version__
+from . import __version__, http
+from ._pyproject import add_dependency, remove_dependency, split_spec
+from .config import load_config
 from .errors import PyesmError, StaleLockError
+from .importmap import build_import_map, dump_import_map, static_public_url
+from .lockfile import Lock, dump_lock, load_lock
+from .providers import get_provider
+from .resolve import resolve
+from .vendor import sync
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -68,8 +74,6 @@ class _Ctx:
 
 
 def _load_config(ctx: _Ctx):
-    from .config import load_config
-
     cfg = load_config()
     if ctx.provider:
         cfg.provider = ctx.provider
@@ -78,6 +82,14 @@ def _load_config(ctx: _Ctx):
 
 def _lock_is_stale(cfg, lock) -> bool:
     return lock.inputs_hash != cfg.inputs_hash() or lock.provider != cfg.provider
+
+
+def _resolved_version(entry_url: str) -> str | None:
+    """Pull the pinned version out of a resolved entry URL, e.g.
+    ``.../npm/@scope/pkg@1.2.3/+esm`` -> ``1.2.3``. The version is the first
+    ``@`` segment starting with a digit (a package scope never does)."""
+    m = re.search(r"@(\d[^/?#]*)", entry_url)
+    return m.group(1) if m else None
 
 
 def _protected_rel(cfg) -> set[str]:
@@ -90,9 +102,6 @@ def _protected_rel(cfg) -> set[str]:
 
 
 def _do_resolve_and_write(cfg, ctx: _Ctx):
-    from .lockfile import dump_lock
-    from .resolve import resolve
-
     if ctx.offline:
         raise PyesmError("cannot resolve while --offline (needs network)")
     ctx.info(f"resolving {len(cfg.dependencies)} dependencies via {cfg.provider}…")
@@ -103,16 +112,12 @@ def _do_resolve_and_write(cfg, ctx: _Ctx):
 
 
 def _build_static_map(cfg, lock, ctx: _Ctx) -> None:
-    from .importmap import build_import_map, dump_import_map, static_public_url
-
     import_map = build_import_map(lock, static_public_url(cfg.base_url), integrity=cfg.integrity)
     dump_import_map(import_map, cfg.importmap_path)
     ctx.detail(f"wrote {cfg.importmap_path}")
 
 
 def _do_sync(cfg, lock, ctx: _Ctx):
-    from .vendor import sync
-
     report = sync(
         lock,
         cfg.output_path,
@@ -130,8 +135,6 @@ def _do_sync(cfg, lock, ctx: _Ctx):
 
 
 def _load_lock_or_fail(cfg, ctx: _Ctx):
-    from .lockfile import load_lock
-
     if not cfg.lock_path.is_file():
         if ctx.frozen:
             raise StaleLockError("pyesm.lock is missing")
@@ -179,24 +182,43 @@ def cmd_build(args, ctx: _Ctx) -> int:
 
 
 def cmd_add(args, ctx: _Ctx) -> int:
-    from ._pyproject import add_dependency, split_spec
-
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'add'")
     cfg = _load_config(ctx)
+    no_version: list[str] = []
     for spec in args.packages:
         name, range_ = split_spec(spec)
         add_dependency(cfg.pyproject_path, name, range_)
-        ctx.info(f"added {name} = {range_ or '(latest)'}")
+        if range_:
+            ctx.info(f"added {name} = {range_}")
+        else:
+            no_version.append(name)
+
     cfg = _load_config(ctx)  # reload with new deps
     lock = _do_resolve_and_write(cfg, ctx)
+
+    # For deps added without a version, pin a caret range to the resolved
+    # version (e.g. `react` -> `react = "^18.3.1"`), so pyproject records what
+    # we vendored instead of an empty specifier.
+    backfilled = False
+    for name in no_version:
+        version = _resolved_version(lock.imports.get(name, ""))
+        spec = f"^{version}" if version else ""
+        add_dependency(cfg.pyproject_path, name, spec)
+        ctx.info(f"added {name} = {spec or '(latest)'}")
+        backfilled = backfilled or bool(version)
+    if backfilled:
+        # Only the specifier string changed, not the resolved graph; re-stamp
+        # the lock's inputs_hash so it isn't seen as stale.
+        cfg = _load_config(ctx)
+        lock.inputs_hash = cfg.inputs_hash()
+        dump_lock(lock, cfg.lock_path)
+
     _do_sync(cfg, lock, ctx)
     return 0
 
 
 def cmd_remove(args, ctx: _Ctx) -> int:
-    from ._pyproject import remove_dependency
-
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'remove'")
     cfg = _load_config(ctx)
@@ -210,8 +232,6 @@ def cmd_remove(args, ctx: _Ctx) -> int:
         lock = _do_resolve_and_write(cfg, ctx)
         _do_sync(cfg, lock, ctx)
     else:
-        from .lockfile import Lock, dump_lock
-
         lock = Lock(provider=cfg.provider, inputs_hash=cfg.inputs_hash())
         dump_lock(lock, cfg.lock_path)
         _do_sync(cfg, lock, ctx)
@@ -219,8 +239,6 @@ def cmd_remove(args, ctx: _Ctx) -> int:
 
 
 def cmd_clean(args, ctx: _Ctx) -> int:
-    import shutil
-
     cfg = _load_config(ctx)
     out = cfg.output_path
     if out.exists():
@@ -236,11 +254,6 @@ def cmd_clean(args, ctx: _Ctx) -> int:
 
 
 def cmd_outdated(args, ctx: _Ctx) -> int:
-    import asyncio
-
-    from . import http
-    from .providers import get_provider
-
     if ctx.offline:
         raise PyesmError("cannot check outdated while --offline")
     cfg = _load_config(ctx)

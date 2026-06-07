@@ -67,6 +67,17 @@ def test_add_mutates_pyproject_and_vendors(in_project):
     assert "scheduler" in lock["imports"]
 
 
+def test_add_without_version_backfills_caret_range(in_project):
+    assert main(["add", "scheduler"]) == 0
+    deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][
+        "dependencies"
+    ]
+    # resolved version (0.23.2 in the fake graph) pinned as a caret range
+    assert deps["scheduler"] == "^0.23.2"
+    # and the lock isn't left stale by the specifier rewrite
+    assert main(["--frozen", "sync"]) == 0
+
+
 def test_clean_keeps_lock(in_project):
     assert main(["sync"]) == 0
     assert main(["clean"]) == 0

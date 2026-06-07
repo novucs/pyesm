@@ -6,6 +6,29 @@ from pyesm.providers import get_provider
 from pyesm.resolve import resolve
 
 
+def test_crawl_ignores_relative_false_positive_specifiers():
+    # Syntax-highlighting packages embed import/from text in string literals;
+    # the scanner extracts garbage relative specifiers that must not be followed
+    # (they would urljoin into bogus same-CDN URLs that 404).
+    J = "https://cdn.jsdelivr.net"
+    parent = f"{J}/npm/lang-css@6.3.1/+esm"
+    body = (
+        b'import{a}from"/npm/dep@1.0.0/+esm";'
+        b"d('import {${names}} from \"${module}\"');"  # snippet -> ${module}
+        b'const t={"@import":118,",":1};'  # token tables -> :118, and ,
+        b'"import export from":kw;'  # highlight map -> :kw
+    )
+    graph = {
+        parent: (parent, body),
+        f"{J}/npm/dep@1.0.0/+esm": (f"{J}/npm/dep@1.0.0/+esm", b"export default 1;"),
+    }
+    fetch = RecordingFetch(graph)
+    result = asyncio.run(Crawler(get_provider("jsdelivr"), fetch=fetch.crawl).crawl([parent]))
+    # only the real /npm/ dep is followed; no comma/${module}/etc. URLs fetched
+    assert set(result.modules) == {parent, f"{J}/npm/dep@1.0.0/+esm"}
+    assert not any("," in u or "$" in u for u in fetch.calls)
+
+
 def test_crawl_pins_versions_and_attaches_keys():
     fetch = RecordingFetch()
     provider = get_provider("jsdelivr")

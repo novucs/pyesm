@@ -82,6 +82,13 @@ class Crawler:
         text = raw.decode("utf-8", errors="replace")
         out: list[str] = []
         for spec in scan_imports(text):
+            # CDN-built ESM references siblings only by root-relative (/npm/...)
+            # or absolute URL. A relative specifier is a scanner false positive
+            # (import/from text inside a string literal, common in syntax-
+            # highlighting packages); resolving it would urljoin a bogus
+            # same-CDN URL that 404s, so skip it.
+            if not (spec.startswith("/") or "://" in spec):
+                continue
             child = self.provider.absolutize(parent_canonical, spec)
             if self.provider.is_module_url(child):
                 out.append(child)

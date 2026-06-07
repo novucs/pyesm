@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .errors import ConfigError
+from .shims import ESMS_VERSION, should_inject
 
 # ``integrity`` defaults to True (SRI on); set False to omit the import map's
 # integrity block.
@@ -60,8 +61,6 @@ class Config:
     def inputs_hash(self) -> str:
         """Stable ``sha256-<hex>`` over the inputs that affect resolution
         (provider, production flag, dependencies, shims). Drives lock staleness."""
-        from .shims import ESMS_VERSION, should_inject
-
         payload = {
             "provider": self.provider,
             "production": self.production,
