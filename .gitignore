@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Build
+/dist/
+/build/
+
+# Environments
+.venv/
+venv/
+
+# pyesm output (consumers vendor their own; not committed here)
+/static/
+
+# IDEs
+.idea/
