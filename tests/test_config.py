@@ -79,6 +79,32 @@ def test_table_dependencies_expand_to_subpaths(tmp_path):
     }
 
 
+def test_root_flag_imports_package_alongside_subpaths(tmp_path):
+    _write(
+        tmp_path,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        sigma = { version = "^3.0.0", subpaths = ["rendering"], root = true }
+    """,
+    )
+    deps = load_config(tmp_path).dependencies
+    assert deps == {"sigma": "^3.0.0", "sigma/rendering": "^3.0.0"}
+
+
+def test_root_must_be_boolean(tmp_path):
+    _write(
+        tmp_path,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        sigma = { version = "^3.0.0", subpaths = ["rendering"], root = "yes" }
+    """,
+    )
+    with pytest.raises(ConfigError, match="root must be a boolean"):
+        load_config(tmp_path)
+
+
 def test_table_and_equivalent_flat_hash_identically(tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     a.mkdir()

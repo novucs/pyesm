@@ -61,8 +61,30 @@ def test_genuine_conflict_raises():
         ("A", "1.0.0"): {"dependencies": {"dep": "~1.4.0"}},  # 1.4.x only
         ("C", "1.0.0"): {"dependencies": {"dep": "^2.0.0"}},  # 2.x only
     }
-    with pytest.raises(ResolveError, match="cannot resolve a single version of 'dep'"):
+    with pytest.raises(ResolveError) as exc:
         _resolve([("A", "1.0.0"), ("C", "1.0.0")], versions, manifests)
+    msg = str(exc.value)
+    assert "no version of 'dep' satisfies every requirement" in msg
+    # names who wants each incompatible range
+    assert "~1.4.0  required by A@1.0.0" in msg
+    assert "^2.0.0  required by C@1.0.0" in msg
+
+
+def test_conflict_message_collapses_a_requirer_tried_at_many_versions():
+    # react is forced to 17.0.2; every widget version peer-needs react ^18, so the
+    # resolver backtracks through both widget versions. The message must list
+    # widget ONCE (its highest tried version), not once per attempt.
+    versions = {"react": ["17.0.2"], "widget": ["1.0.0", "1.1.0"]}
+    manifests = {
+        ("widget", "1.1.0"): {"peerDependencies": {"react": "^18.2.0"}},
+        ("widget", "1.0.0"): {"peerDependencies": {"react": "^18.0.0"}},
+    }
+    with pytest.raises(ResolveError) as exc:
+        _resolve([("react", "17.0.2"), ("widget", "^1.0.0")], versions, manifests)
+    msg = str(exc.value)
+    assert "required by widget@1.1.0" in msg  # highest version, shown once
+    assert "widget@1.0.0" not in msg  # the backtracked-over attempt is not noise
+    assert msg.count("required by widget") == 1
 
 
 def test_optional_peer_dependency_is_not_required():

@@ -103,6 +103,21 @@ def test_add_subpaths_group_into_inline_table(in_project):
     assert deps["scheduler"]["subpaths"] == ["bar"]
 
 
+def test_add_root_then_subpath_keeps_both_imports(in_project):
+    # `pyesm add scheduler` then `pyesm add scheduler/foo` must import BOTH the
+    # bare package and the subpath (regression: the root used to be dropped).
+    assert main(["add", "scheduler"]) == 0
+    assert main(["add", "scheduler/foo"]) == 0
+    deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][
+        "dependencies"
+    ]
+    assert deps["scheduler"] == {"version": "^0.23.2", "subpaths": ["foo"], "root": True}
+    lock = json.loads((in_project / "pyesm.lock").read_text())
+    assert "scheduler" in lock["imports"]
+    assert "scheduler/foo" in lock["imports"]
+    assert main(["--frozen", "sync"]) == 0  # not left stale
+
+
 def test_add_without_version_backfills_caret_range(in_project):
     assert main(["add", "scheduler"]) == 0
     deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][

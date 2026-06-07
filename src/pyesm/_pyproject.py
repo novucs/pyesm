@@ -39,32 +39,54 @@ def split_subpath(name: str) -> tuple[str, str]:
     return pkg, subpath
 
 
+def _read_group(cur) -> tuple[str, list[str], bool]:
+    """Decompose a dependency value into ``(version, subpaths, root)``. A bare
+    string is a root dep; a table carries its own fields."""
+    if cur is None:
+        return "", [], False
+    if isinstance(cur, str):
+        return str(cur), [], True
+    subpaths = [str(s) for s in (cur.get("subpaths") or [])]
+    return str(cur.get("version", "")), subpaths, bool(cur.get("root", False))
+
+
+def _store_group(deps, package: str, version: str, subpaths: list[str], root: bool) -> None:
+    """Write ``package`` back: a bare ``version`` string when it is only a root,
+    else a freshly-built grouped inline table (rebuilt to dodge a tomlkit bug
+    where appending a key to a parsed inline table drops its separator)."""
+    if not subpaths:
+        deps[package] = version
+        return
+    table = tomlkit.inline_table()
+    table["version"] = version
+    table["subpaths"] = subpaths
+    if root:
+        table["root"] = True
+    deps[package] = table
+
+
 def add_dependency(pyproject: Path, name: str, range_: str) -> None:
-    """Add or update ``name = "range"`` (string form) in the dependencies table."""
+    """Add or update the package root. Preserves an existing grouped (subpaths)
+    table by flagging its root rather than clobbering the subpaths."""
     doc = _load(pyproject)
-    _ensure_deps(doc)[name] = range_
+    deps = _ensure_deps(doc)
+    version, subpaths, _ = _read_group(deps.get(name))
+    if subpaths:  # keep the subpaths; just (re)assert the root import
+        _store_group(deps, name, range_ or version, subpaths, root=True)
+    else:
+        deps[name] = range_
     _save(pyproject, doc)
 
 
 def add_subpath_dependency(pyproject: Path, package: str, version: str, subpath: str) -> None:
-    """Add ``subpath`` under an inline-table dep for ``package``, merging into an
-    existing entry (and setting ``version`` when given)."""
+    """Add ``subpath`` under a grouped table for ``package``, merging into an
+    existing entry. A pre-existing bare root dep keeps importing the root."""
     doc = _load(pyproject)
     deps = _ensure_deps(doc)
-    cur = deps.get(package)
-    if cur is None or isinstance(cur, str):
-        table = tomlkit.inline_table()
-        table["version"] = version or (cur if isinstance(cur, str) else "")
-        table["subpaths"] = [subpath]
-        deps[package] = table
-    else:
-        if version:
-            cur["version"] = version
-        subs = cur.get("subpaths")
-        if subs is None:
-            cur["subpaths"] = [subpath]
-        elif subpath not in subs:
-            subs.append(subpath)
+    cur_version, subpaths, root = _read_group(deps.get(package))
+    if subpath not in subpaths:
+        subpaths.append(subpath)
+    _store_group(deps, package, version or cur_version, subpaths, root=root)
     _save(pyproject, doc)
 
 
@@ -80,19 +102,21 @@ def remove_dependency(pyproject: Path, name: str) -> bool:
 
 
 def remove_subpath_dependency(pyproject: Path, package: str, subpath: str) -> bool:
-    """Remove ``subpath`` from ``package``'s table; drop the dep if none remain."""
+    """Remove ``subpath`` from ``package``'s table; collapse to a bare root dep
+    if ``root`` was set, else drop the dep once no subpaths remain."""
     doc = _load(pyproject)
     deps = _get_deps(doc)
     if deps is None:
         return False
-    cur = deps.get(package)
-    if cur is None or isinstance(cur, str):
+    version, subpaths, root = _read_group(deps.get(package))
+    if subpath not in subpaths:
         return False
-    subs = cur.get("subpaths") or []
-    if subpath not in subs:
-        return False
-    subs.remove(subpath)
-    if not subs:
+    subpaths.remove(subpath)
+    if subpaths:
+        _store_group(deps, package, version, subpaths, root=root)
+    elif root:
+        deps[package] = version  # collapse back to a bare root dependency
+    else:
         del deps[package]
     _save(pyproject, doc)
     return True

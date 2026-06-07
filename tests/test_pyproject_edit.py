@@ -131,6 +131,45 @@ def test_add_subpath_creates_and_merges_inline_table(tmp_path):
     assert _deps(p)["react"] == "^18.2.0"  # string deps untouched
 
 
+def test_add_subpath_preserves_an_existing_root_dep(tmp_path):
+    # `pyesm add sigma` then `pyesm add sigma/rendering` must keep importing the
+    # bare `sigma` root (regression: the root used to be silently dropped).
+    p = _proj(
+        tmp_path,
+        """
+        [tool.pyesm.dependencies]
+        sigma = "^3.0.0"
+    """,
+    )
+    add_subpath_dependency(p, "sigma", "", "rendering")
+    assert _deps(p)["sigma"] == {"version": "^3.0.0", "subpaths": ["rendering"], "root": True}
+
+
+def test_add_root_to_an_existing_subpath_table_sets_root(tmp_path):
+    # the reverse order: a subpath table already exists, then the root is added.
+    p = _proj(
+        tmp_path,
+        """
+        [tool.pyesm.dependencies]
+        sigma = { version = "^3.0.0", subpaths = ["rendering"] }
+    """,
+    )
+    add_dependency(p, "sigma", "^3.0.0")
+    assert _deps(p)["sigma"] == {"version": "^3.0.0", "subpaths": ["rendering"], "root": True}
+
+
+def test_remove_last_subpath_with_root_collapses_to_root(tmp_path):
+    p = _proj(
+        tmp_path,
+        """
+        [tool.pyesm.dependencies]
+        sigma = { version = "^3.0.0", subpaths = ["rendering"], root = true }
+    """,
+    )
+    assert remove_subpath_dependency(p, "sigma", "rendering") is True
+    assert _deps(p)["sigma"] == "^3.0.0"  # collapses back to a bare root dep
+
+
 def test_remove_subpath_drops_one_then_the_dep(tmp_path):
     p = _proj(
         tmp_path,

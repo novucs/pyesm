@@ -117,10 +117,11 @@ def load_config(project_root: Path | None = None) -> Config:
 def _normalize_dependencies(deps: dict) -> dict[str, str]:
     """Expand the dependency table into a flat ``specifier -> range`` map.
 
-    A value is either a range string, or a table ``{version, subpaths}``. A
-    table with ``subpaths`` expands to one ``"<package>/<subpath>"`` entry per
-    subpath (all sharing the one version); without subpaths it is the package
-    root. Both inline and nested-sub-table TOML syntaxes parse to the same dict.
+    A value is either a range string, or a table ``{version, subpaths, root}``.
+    A table with ``subpaths`` expands to one ``"<package>/<subpath>"`` entry per
+    subpath (all sharing the one version); with no subpaths it is the package
+    root. ``root = true`` additionally imports the bare package alongside its
+    subpaths. Both inline and nested-sub-table TOML syntaxes parse the same.
     """
     out: dict[str, str] = {}
     for key, val in deps.items():
@@ -130,7 +131,7 @@ def _normalize_dependencies(deps: dict) -> dict[str, str]:
             continue
         if not isinstance(val, dict):
             raise ConfigError(f"dependency {key!r} must be a version string or a table")
-        unknown = set(val) - {"version", "subpaths"}
+        unknown = set(val) - {"version", "subpaths", "root"}
         if unknown:
             raise ConfigError(f"dependency {key!r} has unknown keys: {sorted(unknown)}")
         version = val.get("version", "")
@@ -139,9 +140,14 @@ def _normalize_dependencies(deps: dict) -> dict[str, str]:
         subpaths = val.get("subpaths", [])
         if not isinstance(subpaths, list) or not all(isinstance(s, str) for s in subpaths):
             raise ConfigError(f"dependency {key!r}: subpaths must be a list of strings")
+        root = val.get("root", False)
+        if not isinstance(root, bool):
+            raise ConfigError(f"dependency {key!r}: root must be a boolean")
         if subpaths:
             for sub in subpaths:
                 out[f"{key}/{sub.strip('/')}"] = version
+            if root:  # import the bare package too, not only its subpaths
+                out[key] = version
         else:
             out[key] = version
     return out

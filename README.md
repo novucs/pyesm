@@ -108,7 +108,9 @@ lodash-es = { version = "^4.17.21", subpaths = ["debounce", "throttle", "cloneDe
 
 `pyesm add lodash-es/debounce` writes/merges that grouped table for you; plain packages stay in the
 `name = "range"` shorthand. (For long subpath lists, the equivalent nested form
-`[tool.pyesm.dependencies.lodash-es]` reads the same.)
+`[tool.pyesm.dependencies.lodash-es]` reads the same.) A grouped table imports only its `subpaths`;
+add `root = true` to also import the bare package (`pyesm add sigma` followed by `pyesm add
+sigma/rendering` sets this for you, so both `sigma` and `sigma/rendering` resolve).
 
 ---
 

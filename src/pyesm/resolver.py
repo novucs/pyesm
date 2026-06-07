@@ -18,7 +18,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from resolvelib import AbstractProvider, BaseReporter, Resolver
-from resolvelib.resolvers import ResolutionError
+from resolvelib.resolvers import ResolutionImpossible, ResolutionTooDeep
 from semantic_version import NpmSpec, Version
 
 from .errors import ResolveError
@@ -140,14 +140,44 @@ async def resolve_graph(
 
     try:
         return await loop.run_in_executor(None, run)
-    except ResolutionError as exc:
+    except ResolutionImpossible as exc:
         raise ResolveError(_format_conflict(exc)) from exc
+    except ResolutionTooDeep as exc:
+        raise ResolveError(
+            f"could not resolve dependencies: resolution did not settle after "
+            f"{exc.round_count} rounds — the constraints are likely contradictory"
+        ) from exc
 
 
-def _format_conflict(exc: ResolutionError) -> str:
-    causes = getattr(exc, "causes", None)
+def _format_conflict(exc: ResolutionImpossible) -> str:
+    causes = list(exc.causes)
     if not causes:
         return "could not resolve a compatible set of dependency versions"
     pkg = causes[0].requirement.name
-    wants = sorted({f"{c.requirement.range_ or '*'}" for c in causes if c.requirement.name == pkg})
-    return f"cannot resolve a single version of {pkg!r}: incompatible constraints {wants}"
+
+    # Backtracking tries many versions of a requirer, each adding a cause for the
+    # same dependency. Collapse those to one line per requirer (keeping its
+    # highest version's range) so the conflict reads cleanly.
+    direct: set[str] = set()
+    transitive: dict[str, tuple[Version, str]] = {}
+    for c in causes:
+        if c.requirement.name != pkg:
+            continue
+        rng = c.requirement.range_ or "*"
+        if c.parent is None:
+            direct.add(rng)
+        else:
+            ver = _ver(c.parent.version)
+            if c.parent.name not in transitive or ver > transitive[c.parent.name][0]:
+                transitive[c.parent.name] = (ver, rng)
+
+    demands = [(rng, "your pyproject.toml") for rng in sorted(direct)]
+    demands += [(rng, f"{name}@{ver}") for name, (ver, rng) in sorted(transitive.items())]
+
+    width = max(len(rng) for rng, _ in demands)
+    lines = "\n".join(f"  - {rng.ljust(width)}  required by {who}" for rng, who in demands)
+    return (
+        f"dependency conflict: no version of {pkg!r} satisfies every requirement:\n"
+        f"{lines}\n"
+        f"hint: pin compatible ranges for {pkg!r}, or remove one of the conflicting dependencies"
+    )
