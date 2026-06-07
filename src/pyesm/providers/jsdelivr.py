@@ -22,6 +22,7 @@ _RANGE_CHARS = set("^~*xX <>=|| -")
 class JsDelivrProvider(Provider):
     name = "jsdelivr"
     origin = ORIGIN
+    supports_dedup = True
 
     def entry_url(self, name: str, range_: str, *, production: bool) -> str:
         # +esm has no prod/dev distinction; range may be empty (latest).
@@ -41,23 +42,49 @@ class JsDelivrProvider(Provider):
         if get_json is None:
             raise ResolveError("jsDelivr resolution requires an HTTP client")
         pkg, subpath = self._split_subpath(name)
-        version = await self._resolve_version(pkg, range_, get_json)
+        version = await self.resolve_version(pkg, range_, get_json=get_json)
         tail = f"/{subpath}" if subpath else ""
         return f"{ORIGIN}/npm/{pkg}@{version}{tail}/+esm"
 
-    async def _resolve_version(self, name: str, range_: str, get_json) -> str:
+    async def resolve_version(self, pkg: str, range_: str, *, get_json) -> str:
         rng = range_.strip()
         if rng and not (set(rng) & _RANGE_CHARS):
             # Already an exact version or a non-range tag we can use directly.
             return rng
-        url = f"{DATA_API}/{name}/resolved"
+        url = f"{DATA_API}/{pkg}/resolved"
         if rng:
             url += f"?specifier={quote(rng, safe='')}"
         data = await get_json(url)
         version = data.get("version")
         if not version:
-            raise ResolveError(f"jsDelivr could not resolve {name}@{rng or 'latest'}")
+            raise ResolveError(f"jsDelivr could not resolve {pkg}@{rng or 'latest'}")
         return str(version)
+
+    def versions_url(self, pkg: str) -> str:
+        return f"{DATA_API}/{pkg}"
+
+    def manifest_url(self, pkg: str, version: str) -> str:
+        return f"{ORIGIN}/npm/{pkg}@{version}/package.json"
+
+    def parse_module(self, url: str) -> tuple[str, str, str] | None:
+        parts = urlsplit(url)
+        if parts.netloc != "cdn.jsdelivr.net":
+            return None
+        path = parts.path
+        if not (path.startswith("/npm/") and path.endswith("/+esm")):
+            return None
+        body = path[len("/npm/") : -len("/+esm")]  # <pkg>@<ver>[/<subpath>]
+        at = body.find("@", 1) if body.startswith("@") else body.find("@")
+        if at <= 0:
+            return None
+        pkg = body[:at]
+        rest = body[at + 1 :]
+        version, _, subpath = rest.partition("/")
+        return pkg, version, subpath
+
+    def build_module(self, pkg: str, version: str, subpath: str) -> str:
+        tail = f"/{subpath}" if subpath else ""
+        return f"{ORIGIN}/npm/{pkg}@{version}{tail}/+esm"
 
     def is_module_url(self, url: str) -> bool:
         parts = urlsplit(url)

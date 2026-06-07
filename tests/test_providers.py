@@ -75,6 +75,36 @@ def test_esmsh_subpath():
     )
 
 
+def test_jsdelivr_parse_build_manifest():
+    p = get_provider("jsdelivr")
+    assert p.supports_dedup is True
+    assert p.versions_url("react") == "https://data.jsdelivr.com/v1/packages/npm/react"
+    assert p.manifest_url("react", "18.3.1") == (
+        "https://cdn.jsdelivr.net/npm/react@18.3.1/package.json"
+    )
+    assert p.parse_module("https://cdn.jsdelivr.net/npm/react@18.2.0/+esm") == (
+        "react",
+        "18.2.0",
+        "",
+    )
+    assert p.parse_module(
+        "https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.3/mode/toml/+esm"
+    ) == ("@codemirror/legacy-modes", "6.5.3", "mode/toml")
+    assert p.parse_module("https://esm.sh/react@18") is None
+    assert p.build_module("react", "18.3.1", "") == (
+        "https://cdn.jsdelivr.net/npm/react@18.3.1/+esm"
+    )
+    assert p.build_module("@codemirror/legacy-modes", "6.5.3", "mode/toml") == (
+        "https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.3/mode/toml/+esm"
+    )
+
+
+def test_esmsh_no_dedup():
+    p = get_provider("esmsh")
+    assert p.supports_dedup is False
+    assert p.parse_module("https://esm.sh/react@18.2.0") is None
+
+
 def test_unknown_provider_rejected():
     import pytest
 

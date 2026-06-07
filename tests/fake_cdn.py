@@ -45,16 +45,49 @@ GRAPH: dict[str, tuple[str, bytes]] = {
     SHIM_URL: (SHIM_URL, SHIM),
 }
 
-# What the jsDelivr data API resolves each package name to.
+# What the jsDelivr data API resolves each package name to (range -> latest).
 VERSIONS = {"react": "18.2.0", "react-dom": "18.2.0", "scheduler": "0.23.2"}
+
+# Published version lists (for the backtracking resolver's enumeration).
+VERSION_LISTS = {
+    "react": ["18.2.0"],
+    "react-dom": ["18.2.0"],
+    "scheduler": ["0.23.2"],
+}
+
+# package.json dependency ranges, for the npm-semver resolver.
+MANIFESTS: dict[tuple[str, str], dict] = {
+    ("react", "18.2.0"): {},
+    ("react-dom", "18.2.0"): {
+        "dependencies": {"scheduler": "^0.23.2"},
+        "peerDependencies": {"react": "^18.2.0"},
+    },
+    ("scheduler", "0.23.2"): {},
+}
+
+
+def _pkg_ver(body: str) -> tuple[str, str]:
+    at = body.find("@", 1) if body.startswith("@") else body.find("@")
+    return body[:at], body[at + 1 :]
+
+
+def _packument(name: str) -> dict:
+    return {
+        "versions": [{"version": v} for v in VERSION_LISTS[name]],
+        "tags": {"latest": VERSIONS[name]},
+    }
 
 
 async def fake_get_json(url: str) -> dict:
-    """Stand in for the jsDelivr data API ``/resolved`` endpoint."""
-    # .../v1/packages/npm/<name>/resolved?specifier=...
+    """Stand in for the jsDelivr data API and ``package.json`` endpoints."""
+    if url.endswith("/package.json"):
+        body = url.split("/npm/", 1)[1][: -len("/package.json")]
+        pkg, ver = _pkg_ver(body)
+        return MANIFESTS.get((pkg, ver), {})
     after = url.split("/npm/", 1)[1]
-    name = after.split("/resolved", 1)[0]
-    return {"version": VERSIONS[name]}
+    if "/resolved" in after:  # .../npm/<name>/resolved?specifier=...
+        return {"version": VERSIONS[after.split("/resolved", 1)[0]]}
+    return _packument(after)  # .../npm/<name> -> version list + tags
 
 
 class RecordingFetch:
@@ -93,11 +126,16 @@ def mock_client(concurrency: int = 16):
     import httpx
 
     def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
         if request.url.host == "data.jsdelivr.com":
-            # .../v1/packages/npm/<name>/resolved?specifier=...
-            name = request.url.path.split("/npm/", 1)[1].rsplit("/resolved", 1)[0]
-            return httpx.Response(200, json={"version": VERSIONS[name]})
-        url = f"https://{request.url.host}{request.url.path}"
+            after = path.split("/npm/", 1)[1]
+            if after.endswith("/resolved"):
+                return httpx.Response(200, json={"version": VERSIONS[after[: -len("/resolved")]]})
+            return httpx.Response(200, json=_packument(after))  # version list
+        if path.endswith("/package.json"):
+            pkg, ver = _pkg_ver(path.split("/npm/", 1)[1][: -len("/package.json")])
+            return httpx.Response(200, json=MANIFESTS.get((pkg, ver), {}))
+        url = f"https://{request.url.host}{path}"
         if url in GRAPH:
             return httpx.Response(200, content=GRAPH[url][1])
         return httpx.Response(404)

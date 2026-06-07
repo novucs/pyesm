@@ -6,6 +6,7 @@ Async; ``resolve()`` is a synchronous wrapper via ``asyncio.run``.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 
 from . import http
 from .config import Config
@@ -13,13 +14,8 @@ from .crawler import Crawler, FetchFn
 from .hashing import sri_hash
 from .lockfile import Lock, Module, ShimAsset
 from .providers import get_provider
+from .resolver import resolve_graph
 from .shims import ESMS_VERSION, should_inject
-
-
-def _split_spec(name: str, range_: str) -> tuple[str, str]:
-    # A dependency key is the package name; the value is the range. Ranges like
-    # "^18.2.0", "3", "2", or "" (latest) are passed through to the provider.
-    return name, str(range_).strip()
 
 
 async def resolve_async(
@@ -51,15 +47,57 @@ async def resolve_async(
 
 
 async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
-    # Pin each bare specifier to a version-pinned entry request URL.
-    entry_requests: dict[str, str] = {}
-    for name, range_ in config.dependencies.items():
-        pkg, rng = _split_spec(name, range_)
-        entry_requests[name] = await provider.resolve_entry(
-            pkg, rng, production=config.production, get_json=get_json
+    # Each dependency key is "<package>[/<subpath>]"; the value is the range.
+    user_deps = [
+        (specifier, *provider._split_subpath(specifier), str(range_).strip())
+        for specifier, range_ in config.dependencies.items()
+    ]
+
+    # Resolve the whole graph to one version per package (semver dedup), and
+    # build a rewrite that maps any in-byte module URL to the resolved version.
+    resolved: dict[str, str] = {}
+    rewrite: Callable[[str], str] | None = None
+    if provider.supports_dedup and user_deps:
+
+        async def _fetch_packument(pkg: str) -> dict:
+            data = await get_json(provider.versions_url(pkg))
+            return {
+                "versions": [v["version"] for v in data.get("versions", [])],
+                "tags": data.get("tags", {}),
+            }
+
+        async def _fetch_manifest(pkg: str, ver: str) -> dict:
+            return await get_json(provider.manifest_url(pkg, ver))
+
+        resolved = await resolve_graph(
+            [(pkg, rng) for _, pkg, _, rng in user_deps],
+            fetch_packument=_fetch_packument,
+            fetch_manifest=_fetch_manifest,
+            concurrency=config.concurrency,
         )
 
-    crawler = Crawler(provider, fetch=fetch, concurrency=config.concurrency)
+        def _rewrite(url: str) -> str:
+            parsed = provider.parse_module(url)
+            if parsed is None:
+                return url
+            pkg, _, subpath = parsed
+            ver = resolved.get(pkg)
+            return provider.build_module(pkg, ver, subpath) if ver else url
+
+        rewrite = _rewrite
+
+    # Entry request URL per user dependency (from the resolved version).
+    entry_requests: dict[str, str] = {}
+    for specifier, pkg, subpath, rng in user_deps:
+        ver = resolved.get(pkg)
+        if ver is not None:
+            entry_requests[specifier] = provider.build_module(pkg, ver, subpath)
+        else:
+            entry_requests[specifier] = await provider.resolve_entry(
+                specifier, rng, production=config.production, get_json=get_json
+            )
+
+    crawler = Crawler(provider, fetch=fetch, concurrency=config.concurrency, rewrite=rewrite)
     result = await crawler.crawl(list(entry_requests.values()))
 
     # bare specifier -> canonical (pinned) entry URL

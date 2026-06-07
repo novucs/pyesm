@@ -63,6 +63,33 @@ def test_corrupted_vendored_file_fails_with_url(config, cache_dir):
     assert exc.value.url == target.url
 
 
+def test_sync_atomic_on_download_failure(config, cache_dir):
+    import shutil
+
+    lock = _lock(config)
+    sync(lock, config.output_path, fetch=RecordingFetch().download)  # warm output + cache
+    stray = config.output_path / "stray.js"
+    stray.write_text("orphan")
+    before = sorted(
+        p.relative_to(config.output_path).as_posix()
+        for p in config.output_path.rglob("*")
+        if p.is_file()
+    )
+    shutil.rmtree(cache_dir)  # force re-download
+
+    async def boom(url):
+        raise RuntimeError("network down")
+
+    with pytest.raises(RuntimeError):
+        sync(lock, config.output_path, fetch=boom)
+    after = sorted(
+        p.relative_to(config.output_path).as_posix()
+        for p in config.output_path.rglob("*")
+        if p.is_file()
+    )
+    assert after == before  # output untouched: stray not pruned, nothing materialized over
+
+
 def test_prune_removes_unlocked_files(config, cache_dir):
     lock = _lock(config)
     sync(lock, config.output_path, fetch=RecordingFetch().download)

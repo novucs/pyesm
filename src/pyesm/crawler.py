@@ -42,13 +42,18 @@ class Crawler:
         *,
         fetch: FetchFn,
         concurrency: int = 16,
+        rewrite: Callable[[str], str] | None = None,
     ) -> None:
         self.provider = provider
         self.fetch = fetch
         self.concurrency = concurrency
+        # Maps an in-byte module URL to the version-resolved URL to actually
+        # fetch (for semver dedup). Identity by default.
+        self.rewrite = rewrite or (lambda url: url)
         self._modules: dict[str, CrawlModule] = {}
         self._req_to_can: dict[str, str] = {}
-        self._edges: list[tuple[str, str]] = []  # (parent_canonical, child_request)
+        # (parent_canonical, original_specifier_url, request_url)
+        self._edges: list[tuple[str, str, str]] = []
 
     async def crawl(self, entry_urls: list[str]) -> CrawlResult:
         """Crawl from the given entry request URLs and return the graph."""
@@ -64,11 +69,12 @@ class Crawler:
                 if canonical in self._modules:
                     continue  # already scanned via another request URL
                 self._modules[canonical] = CrawlModule(url=canonical, integrity=sri_hash(raw))
-                for child in self._children(canonical, raw):
-                    self._edges.append((canonical, child))
-                    if child not in seen:
-                        seen.add(child)
-                        next_frontier.append(child)
+                for original in self._children(canonical, raw):
+                    request = self.rewrite(original)
+                    self._edges.append((canonical, original, request))
+                    if request not in seen:
+                        seen.add(request)
+                        next_frontier.append(request)
             frontier = next_frontier
 
         return self._finalize()
@@ -95,15 +101,15 @@ class Crawler:
         return out
 
     def _finalize(self) -> CrawlResult:
-        for parent_can, child_req in self._edges:
-            child_can = self._req_to_can.get(child_req)
+        for parent_can, original, request in self._edges:
+            child_can = self._req_to_can.get(request)
             if child_can is None:
                 continue
             self._modules[parent_can].deps.add(child_can)
-            # The import-map key is the in-byte specifier form: the request URL's
-            # path+query (root-relative), which the browser resolves against the
-            # deployment origin. Attach it to the *resolved* (canonical) module.
-            self._modules[child_can].keys.add(self.provider.import_map_key(child_req))
+            # Key is the *original* in-byte specifier (root-relative), which the
+            # browser resolves against the deployment origin; it points at the
+            # version-resolved module the request URL was fetched as.
+            self._modules[child_can].keys.add(self.provider.import_map_key(original))
         return CrawlResult(
             modules=self._modules,
             request_to_canonical=dict(self._req_to_can),

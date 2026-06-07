@@ -20,8 +20,10 @@ $ pip install "pyesm[django]" # with the optional Django integration
 ```
 
 - **Python 3.12+.**
-- Runtime dependencies are minimal: `httpx` and `tomlkit`.
-- **No Node toolchain and no compiled extensions**, ever.
+- Four pure-Python runtime dependencies — `httpx` (async HTTP), `tomlkit` (comment-preserving
+  `pyproject.toml` edits), and `semantic-version` + `resolvelib` (npm-range dependency resolution).
+  Three are zero-dependency; only `httpx` pulls a transitive stack (httpcore/anyio/certifi). **No Node
+  toolchain and no compiled extensions, ever.**
 
 ---
 
@@ -47,9 +49,15 @@ Already have deps in `pyproject.toml`? Skip `add` and run `pyesm sync`.
 
 The design follows four load-bearing decisions:
 
-1. **The CDN resolves and pins; pyesm crawls.** We don't reimplement npm semver. We ask a CDN's ESM
-   endpoint for `name@range`, pin it to an exact version (jsDelivr via its data API, esm.sh via
-   redirect), then crawl the returned module graph.
+1. **pyesm resolves the dependency graph (one version per package).** It reads each package's
+   `package.json` dependency ranges and runs a real **backtracking** resolver (`resolvelib`, pip's
+   resolver, with `semantic-version` for npm ranges) to pick, for every package, a single version
+   satisfying *all* constraints — backtracking off a "latest" choice when an earlier version of an
+   intermediate package is needed to satisfy something downstream. When it crawls the module graph it
+   rewrites each bundle's version-pinned imports to the resolved version, so shared transitive deps
+   collapse to **one** vendored copy instead of the many the CDN's independently-pinned bundles would
+   produce. A graph with no solution (e.g. react 17 vs 18) is a hard error and changes nothing, so you
+   always get a consistent 1:1 import mapping or a clean failure.
 2. **Relocate via the import map, never by editing bytes.** CDN-built ESM references sibling modules
    by *root-relative* path (e.g. `/npm/react@18.3.1/+esm`). pyesm adds each such specifier to the
    import map as a key pointing at the local vendored copy. The browser resolves the specifier against
@@ -108,15 +116,15 @@ lodash-es = { version = "^4.17.21", subpaths = ["debounce", "throttle", "cloneDe
 
 The single entry point is `pyesm`. Running it bare prints help.
 
-| Command                        | Network?     | Behavior                                                                                                                                                                   |
-|--------------------------------|--------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `pyesm add <pkg>[@range] …`    | yes          | Add to `[tool.pyesm.dependencies]`, re-resolve, update lock, vendor.                                                                                                       |
-| `pyesm remove <pkg> …`         | yes          | Remove from deps, re-resolve, prune now-unused vendored files.                                                                                                             |
-| `pyesm lock`                   | yes          | Re-resolve from `pyproject.toml`, rewrite `pyesm.lock`.                                                                                                                    |
+| Command                        | Network?     | Behavior                                                                                                                                              |
+|--------------------------------|--------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `pyesm add <pkg>[@range] …`    | yes          | Add to `[tool.pyesm.dependencies]`, re-resolve, update lock, vendor.                                                                                  |
+| `pyesm remove <pkg> …`         | yes          | Remove from deps, re-resolve, prune now-unused vendored files.                                                                                        |
+| `pyesm lock`                   | yes          | Re-resolve from `pyproject.toml`, rewrite `pyesm.lock`.                                                                                               |
 | `pyesm sync` (alias `install`) | only if cold | Make local files + import map match the lock; download missing modules and verify every integrity. **Offline & near-instant when the cache is warm.** |
-| `pyesm build`                  | no           | (Re)emit the static `importmap.json` from the lock.                                                                                                                        |
-| `pyesm clean`                  | no           | Remove the contents of `output-dir` (keeps the lock).                                                                                                                      |
-| `pyesm outdated`               | yes          | Report deps whose range now resolves to a newer pinned version.                                                                                                            |
+| `pyesm build`                  | no           | (Re)emit the static `importmap.json` from the lock.                                                                                                   |
+| `pyesm clean`                  | no           | Remove the contents of `output-dir` (keeps the lock).                                                                                                 |
+| `pyesm outdated`               | yes          | Report deps whose range now resolves to a newer pinned version.                                                                                       |
 
 `add` accepts version ranges inline, scope-aware:
 
@@ -142,8 +150,8 @@ $ pyesm remove react-dom
 `lock` writes a deterministic JSON lockfile next to `pyproject.toml`. **Commit it**: it drives
 reproducible, offline `sync` in CI and deploys. It captures:
 
-- `provider` and `inputs_hash`: a hash of the resolved dependency table; lets `sync` skip
-  re-resolution when `pyproject.toml` is unchanged.
+- `provider` and `inputs_hash`: a hash of the resolution inputs (provider, declared dependency table,
+  production flag, shims); lets `sync` skip re-resolution when `pyproject.toml` is unchanged.
 - `imports`: each bare specifier → its pinned entry-module URL.
 - `modules`: every node in the crawled graph: `url` (canonical CDN URL), `path` (local file),
   `integrity` (`sha384-…`), `deps`, and `keys` (the root-relative specifiers that map to it).
@@ -259,11 +267,13 @@ $ pyesm sync --offline    # fail rather than touch the network (requires a warm 
 No provider requires Node. (JSPM is intentionally excluded: its generator is Node-only.)
 
 - **`jsdelivr`** (default): vendors transformed ESM from `cdn.jsdelivr.net/npm/<name>@<ver>/+esm`.
-  Because the `+esm` endpoint serves range URLs without redirecting, pyesm pins the exact version via
-  jsDelivr's data API before crawling, so a caret range vendors a single pinned copy.
-- **`esmsh`**: vendors from `esm.sh`, using its `?meta` endpoint where available and following
-  redirects to pin. esm.sh entry URLs aren't version-pinned in the path; pyesm vendors the frozen
-  re-export shim plus its pinned target, all locked by integrity.
+  pyesm resolves the whole dependency graph itself (decision 1) — enumerating versions from jsDelivr's
+  data API and reading each `package.json` — then vendors exactly those resolved versions, deduped to
+  one copy per package.
+- **`esmsh`**: vendors from `esm.sh`, which pins a range by redirect. Its entry URLs aren't
+  version-pinned in the path, so pyesm follows the redirect and vendors the frozen re-export shim plus
+  its pinned target. esm.sh dedupes its graph server-side, so pyesm doesn't run its own resolver for
+  this provider; everything is locked by integrity.
 
 Switch per-run with `--provider`, or set `provider` in config.
 

@@ -6,6 +6,34 @@ from pyesm.providers import get_provider
 from pyesm.resolve import resolve
 
 
+def test_crawl_rewrite_dedups_versions():
+    # two parents import the SAME dep at different pins; a rewrite maps both to
+    # one resolved version -> one module, both pinned specifiers as keys.
+    J = "https://cdn.jsdelivr.net"
+    a = f"{J}/npm/a@1.0.0/+esm"
+    b = f"{J}/npm/b@1.0.0/+esm"
+    graph = {
+        a: (a, b'import x from"/npm/dep@1.2.0/+esm";export default 1;'),
+        b: (b, b'import y from"/npm/dep@1.5.0/+esm";export default 2;'),
+        f"{J}/npm/dep@1.9.9/+esm": (f"{J}/npm/dep@1.9.9/+esm", b"export default 0;"),
+    }
+    fetch = RecordingFetch(graph)
+    provider = get_provider("jsdelivr")
+
+    def rewrite(url):  # pretend the resolver unified dep -> 1.9.9
+        parsed = provider.parse_module(url)
+        if parsed and parsed[0] == "dep":
+            return provider.build_module("dep", "1.9.9", parsed[2])
+        return url
+
+    result = asyncio.run(Crawler(provider, fetch=fetch.crawl, rewrite=rewrite).crawl([a, b]))
+    dep = f"{J}/npm/dep@1.9.9/+esm"
+    assert dep in result.modules  # single resolved copy
+    assert not any("dep@1.2.0" in u or "dep@1.5.0" in u for u in result.modules)
+    # both in-byte pins remap to the one resolved module
+    assert result.modules[dep].keys == {"/npm/dep@1.2.0/+esm", "/npm/dep@1.5.0/+esm"}
+
+
 def test_crawl_ignores_relative_false_positive_specifiers():
     # Syntax-highlighting packages embed import/from text in string literals;
     # the scanner extracts garbage relative specifiers that must not be followed

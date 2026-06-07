@@ -25,6 +25,33 @@ class Provider(abc.ABC):
     name: str
     origin: str  # e.g. "https://cdn.jsdelivr.net"
 
+    # Whether pyesm resolves the dependency graph itself (npm semver) and
+    # rewrites module versions for dedup. Providers that dedup server-side
+    # (esm.sh) leave this False and keep their own pins.
+    supports_dedup: bool = False
+
+    async def resolve_version(self, pkg: str, range_: str, *, get_json) -> str:
+        """Resolve ``pkg@range`` to a single pinned version string."""
+        raise NotImplementedError
+
+    def versions_url(self, pkg: str) -> str:
+        """URL listing ``pkg``'s published versions + dist-tags (for the
+        backtracking resolver to enumerate candidates)."""
+        raise NotImplementedError
+
+    def manifest_url(self, pkg: str, version: str) -> str:
+        """URL of ``pkg@version``'s ``package.json`` (for dependency ranges)."""
+        raise NotImplementedError
+
+    def parse_module(self, url: str) -> tuple[str, str, str] | None:
+        """Split a module URL into ``(package, version, subpath)``; None if it
+        is not a parseable module URL for this provider (no rewrite)."""
+        return None
+
+    def build_module(self, pkg: str, version: str, subpath: str) -> str:
+        """Inverse of :meth:`parse_module`: build a module URL."""
+        raise NotImplementedError
+
     @staticmethod
     def _split_subpath(name: str) -> tuple[str, str]:
         """Split a bare specifier into ``(package, subpath)``; scope-aware.

@@ -67,6 +67,22 @@ def test_add_mutates_pyproject_and_vendors(in_project):
     assert "scheduler" in lock["imports"]
 
 
+def test_atomic_files_rollback(tmp_path):
+    from pyesm.cli import _atomic_files
+
+    existing = tmp_path / "keep.toml"
+    existing.write_text("original")
+    created = tmp_path / "new.lock"  # does not exist yet
+
+    with pytest.raises(ValueError), _atomic_files(existing, created):
+        existing.write_text("mutated")
+        created.write_text("created")
+        raise ValueError("boom")
+
+    assert existing.read_text() == "original"  # restored
+    assert not created.exists()  # removed (didn't exist before)
+
+
 def test_add_subpaths_group_into_inline_table(in_project):
     # the fake graph resolves these to scheduler@0.23.2; use its subpaths
     assert main(["add", "scheduler/foo", "scheduler/bar"]) == 0

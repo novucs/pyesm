@@ -42,26 +42,19 @@ async def sync_async(
     protect: set[str] | None = None,
     concurrency: int = 16,
 ) -> SyncReport:
-    """Vendor every module in ``lock`` into ``output_dir`` and verify it."""
+    """Vendor every module in ``lock`` into ``output_dir`` and verify it.
+
+    Atomic: every module is downloaded and integrity-verified into the cache
+    *first*; only once they are all present do we touch ``output_dir`` (prune +
+    materialize, a local step). So a download/hash failure never leaves
+    ``output_dir`` half-vendored.
+    """
     cache = cache or Cache()
     protect = protect or set()
     report = SyncReport()
+    items = [*lock.modules, *([lock.shims] if lock.shims is not None else [])]
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    expected = {m.path for m in lock.modules} | set(protect)
-    if lock.shims is not None:
-        expected.add(lock.shims.path)
-
-    # 1. Prune files not in the lock (keep protected paths, e.g. importmap.json).
-    for path in sorted(output_dir.rglob("*"), reverse=True):
-        if path.is_dir():
-            continue
-        rel = path.relative_to(output_dir).as_posix()
-        if rel not in expected:
-            path.unlink()
-            report.pruned.append(rel)
-
-    # 2. Ensure cache + materialize + verify each module (downloads in parallel).
+    # Phase 1: ensure every item is in the cache, verified. No output mutation.
     if fetch is None and not offline:
         async with http.make_client(concurrency) as client:
 
@@ -70,11 +63,34 @@ async def sync_async(
                 resp.raise_for_status()
                 return resp.content
 
-            await _materialize_all(lock, output_dir, cache, dl, offline, concurrency, report)
+            ensured = await _ensure_cached(items, cache, dl, offline, concurrency)
     else:
-        await _materialize_all(lock, output_dir, cache, fetch, offline, concurrency, report)
+        ensured = await _ensure_cached(items, cache, fetch, offline, concurrency)
 
-    # 3. Remove now-empty directories left by pruning.
+    for _item, _path, had in ensured:
+        if had:
+            report.reused += 1
+        else:
+            report.downloaded += 1
+
+    # Phase 2: all bytes are cached and verified — now mutate output_dir.
+    output_dir.mkdir(parents=True, exist_ok=True)
+    expected = {item.path for item, _, _ in ensured} | set(protect)
+    for path in sorted(output_dir.rglob("*"), reverse=True):
+        if path.is_dir():
+            continue
+        rel = path.relative_to(output_dir).as_posix()
+        if rel not in expected:
+            path.unlink()
+            report.pruned.append(rel)
+
+    for item, cache_path, _had in ensured:
+        dest = output_dir / item.path
+        materialize(cache_path, dest)
+        actual = sri_hash(dest.read_bytes())
+        if actual != item.integrity:
+            raise HashMismatchError(item.url, item.integrity, actual)
+
     for path in sorted(output_dir.rglob("*"), reverse=True):
         if path.is_dir() and not any(path.iterdir()):
             path.rmdir()
@@ -82,29 +98,17 @@ async def sync_async(
     return report
 
 
-async def _materialize_all(lock, output_dir, cache, fetch, offline, concurrency, report):
+async def _ensure_cached(items, cache, fetch, offline, concurrency):
+    """Download + verify every item into the cache. Returns (item, cache_path, had)."""
     sem = asyncio.Semaphore(concurrency)
 
-    async def one(module):
+    async def one(item):
         async with sem:
-            had = cache.has(module.integrity)
-            cache_path = await cache.ensure_async(
-                module.url, module.integrity, fetch=fetch, offline=offline
-            )
-        dest = output_dir / module.path
-        materialize(cache_path, dest)
-        actual = sri_hash(dest.read_bytes())
-        if actual != module.integrity:
-            raise HashMismatchError(module.url, module.integrity, actual)
-        return had
+            had = cache.has(item.integrity)
+            path = await cache.ensure_async(item.url, item.integrity, fetch=fetch, offline=offline)
+        return item, path, had
 
-    items = [*lock.modules, *([lock.shims] if lock.shims is not None else [])]
-    results = await asyncio.gather(*(one(m) for m in items))
-    for had in results:
-        if had:
-            report.reused += 1
-        else:
-            report.downloaded += 1
+    return await asyncio.gather(*(one(i) for i in items))
 
 
 def sync(

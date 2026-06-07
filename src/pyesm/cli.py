@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import re
 import shutil
 import sys
+from collections.abc import Iterator
+from pathlib import Path
 
 from . import __version__, http
 from ._pyproject import (
@@ -97,6 +100,22 @@ def _resolved_version(entry_url: str) -> str | None:
     ``@`` segment starting with a digit (a package scope never does)."""
     m = re.search(r"@(\d[^/?#]*)", entry_url)
     return m.group(1) if m else None
+
+
+@contextlib.contextmanager
+def _atomic_files(*paths: Path) -> Iterator[None]:
+    """Snapshot ``paths`` and restore them if the block raises, so a failed
+    command (e.g. an unresolvable conflict) leaves them exactly as they were."""
+    snapshots = {p: (p.read_bytes() if p.exists() else None) for p in paths}
+    try:
+        yield
+    except BaseException:
+        for p, content in snapshots.items():
+            if content is None:
+                p.unlink(missing_ok=True)
+            else:
+                p.write_bytes(content)
+        raise
 
 
 def _write_dep(pyproject, package: str, range_: str, subpath: str) -> None:
@@ -201,37 +220,39 @@ def cmd_add(args, ctx: _Ctx) -> int:
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'add'")
     cfg = _load_config(ctx)
-    no_version: list[tuple[str, str, str]] = []  # (specifier, package, subpath)
-    for arg in args.packages:
-        specifier, range_ = split_spec(arg)
-        pkg, subpath = split_subpath(specifier)
-        _write_dep(cfg.pyproject_path, pkg, range_, subpath)
-        if range_:
-            ctx.info(f"added {specifier} = {range_}")
-        else:
-            no_version.append((specifier, pkg, subpath))
+    # Transactional: a conflict (or any failure) leaves pyproject/lock untouched.
+    with _atomic_files(cfg.pyproject_path, cfg.lock_path):
+        no_version: list[tuple[str, str, str]] = []  # (specifier, package, subpath)
+        for arg in args.packages:
+            specifier, range_ = split_spec(arg)
+            pkg, subpath = split_subpath(specifier)
+            _write_dep(cfg.pyproject_path, pkg, range_, subpath)
+            if range_:
+                ctx.info(f"added {specifier} = {range_}")
+            else:
+                no_version.append((specifier, pkg, subpath))
 
-    cfg = _load_config(ctx)  # reload with new deps
-    lock = _do_resolve_and_write(cfg, ctx)
+        cfg = _load_config(ctx)  # reload with new deps
+        lock = _do_resolve_and_write(cfg, ctx)
 
-    # For deps added without a version, pin a caret range to the resolved
-    # version (e.g. `react` -> `react = "^18.3.1"`), so pyproject records what
-    # we vendored instead of an empty specifier.
-    backfilled = False
-    for specifier, pkg, subpath in no_version:
-        version = _resolved_version(lock.imports.get(specifier, ""))
-        rng = f"^{version}" if version else ""
-        _write_dep(cfg.pyproject_path, pkg, rng, subpath)
-        ctx.info(f"added {specifier} = {rng or '(latest)'}")
-        backfilled = backfilled or bool(version)
-    if backfilled:
-        # Only the specifier string changed, not the resolved graph; re-stamp
-        # the lock's inputs_hash so it isn't seen as stale.
-        cfg = _load_config(ctx)
-        lock.inputs_hash = cfg.inputs_hash()
-        dump_lock(lock, cfg.lock_path)
+        # For deps added without a version, pin a caret range to the resolved
+        # version (e.g. `react` -> `react = "^18.3.1"`), so pyproject records what
+        # we vendored instead of an empty specifier.
+        backfilled = False
+        for specifier, pkg, subpath in no_version:
+            version = _resolved_version(lock.imports.get(specifier, ""))
+            rng = f"^{version}" if version else ""
+            _write_dep(cfg.pyproject_path, pkg, rng, subpath)
+            ctx.info(f"added {specifier} = {rng or '(latest)'}")
+            backfilled = backfilled or bool(version)
+        if backfilled:
+            # Only the specifier string changed, not the resolved graph; re-stamp
+            # the lock's inputs_hash so it isn't seen as stale.
+            cfg = _load_config(ctx)
+            lock.inputs_hash = cfg.inputs_hash()
+            dump_lock(lock, cfg.lock_path)
 
-    _do_sync(cfg, lock, ctx)
+        _do_sync(cfg, lock, ctx)
     return 0
 
 
@@ -239,20 +260,20 @@ def cmd_remove(args, ctx: _Ctx) -> int:
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'remove'")
     cfg = _load_config(ctx)
-    for arg in args.packages:
-        pkg, subpath = split_subpath(arg)
-        removed = bool(subpath) and remove_subpath_dependency(cfg.pyproject_path, pkg, subpath)
-        if not removed:
-            # plain package, or a subpath stored flat under its full specifier
-            removed = remove_dependency(cfg.pyproject_path, arg)
-        ctx.info(f"removed {arg}" if removed else f"{arg} not found in dependencies")
-    cfg = _load_config(ctx)
-    if cfg.dependencies:
-        lock = _do_resolve_and_write(cfg, ctx)
-        _do_sync(cfg, lock, ctx)
-    else:
-        lock = Lock(provider=cfg.provider, inputs_hash=cfg.inputs_hash())
-        dump_lock(lock, cfg.lock_path)
+    with _atomic_files(cfg.pyproject_path, cfg.lock_path):
+        for arg in args.packages:
+            pkg, subpath = split_subpath(arg)
+            removed = bool(subpath) and remove_subpath_dependency(cfg.pyproject_path, pkg, subpath)
+            if not removed:
+                # plain package, or a subpath stored flat under its full specifier
+                removed = remove_dependency(cfg.pyproject_path, arg)
+            ctx.info(f"removed {arg}" if removed else f"{arg} not found in dependencies")
+        cfg = _load_config(ctx)
+        if cfg.dependencies:
+            lock = _do_resolve_and_write(cfg, ctx)
+        else:
+            lock = Lock(provider=cfg.provider, inputs_hash=cfg.inputs_hash())
+            dump_lock(lock, cfg.lock_path)
         _do_sync(cfg, lock, ctx)
     return 0
 
