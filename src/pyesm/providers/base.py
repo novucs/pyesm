@@ -25,9 +25,22 @@ class Provider(abc.ABC):
     name: str
     origin: str  # e.g. "https://cdn.jsdelivr.net"
 
+    @staticmethod
+    def _split_subpath(name: str) -> tuple[str, str]:
+        """Split a bare specifier into ``(package, subpath)``; scope-aware.
+
+        ``lodash-es/debounce`` -> ``("lodash-es", "debounce")``;
+        ``react`` -> ``("react", "")``.
+        """
+        if name.startswith("@"):
+            parts = name.split("/", 2)
+            return "/".join(parts[:2]), parts[2] if len(parts) > 2 else ""
+        pkg, _, subpath = name.partition("/")
+        return pkg, subpath
+
     @abc.abstractmethod
     def entry_url(self, name: str, range_: str, *, production: bool) -> str:
-        """The ESM endpoint to request for a bare ``name@range``."""
+        """The ESM endpoint to request for a bare ``name@range`` (+ subpath)."""
 
     async def resolve_entry(
         self, name: str, range_: str, *, production: bool, get_json=None

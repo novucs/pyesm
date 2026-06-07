@@ -97,7 +97,6 @@ def load_config(project_root: Path | None = None) -> Config:
         raise ConfigError(f"integrity must be a boolean, got {tool['integrity']!r}")
 
     merged = {**_DEFAULTS, **{k: v for k, v in tool.items() if k != "dependencies"}}
-    deps = dict(tool.get("dependencies", {}))
 
     cfg = Config(
         project_root=root,
@@ -109,10 +108,43 @@ def load_config(project_root: Path | None = None) -> Config:
         shims=str(merged["shims"]),
         concurrency=int(merged["concurrency"]),
         integrity=bool(merged["integrity"]),
-        dependencies={str(k): str(v) for k, v in deps.items()},
+        dependencies=_normalize_dependencies(tool.get("dependencies", {})),
     )
     _validate(cfg)
     return cfg
+
+
+def _normalize_dependencies(deps: dict) -> dict[str, str]:
+    """Expand the dependency table into a flat ``specifier -> range`` map.
+
+    A value is either a range string, or a table ``{version, subpaths}``. A
+    table with ``subpaths`` expands to one ``"<package>/<subpath>"`` entry per
+    subpath (all sharing the one version); without subpaths it is the package
+    root. Both inline and nested-sub-table TOML syntaxes parse to the same dict.
+    """
+    out: dict[str, str] = {}
+    for key, val in deps.items():
+        key = str(key)
+        if isinstance(val, str):
+            out[key] = val
+            continue
+        if not isinstance(val, dict):
+            raise ConfigError(f"dependency {key!r} must be a version string or a table")
+        unknown = set(val) - {"version", "subpaths"}
+        if unknown:
+            raise ConfigError(f"dependency {key!r} has unknown keys: {sorted(unknown)}")
+        version = val.get("version", "")
+        if not isinstance(version, str):
+            raise ConfigError(f"dependency {key!r}: version must be a string")
+        subpaths = val.get("subpaths", [])
+        if not isinstance(subpaths, list) or not all(isinstance(s, str) for s in subpaths):
+            raise ConfigError(f"dependency {key!r}: subpaths must be a list of strings")
+        if subpaths:
+            for sub in subpaths:
+                out[f"{key}/{sub.strip('/')}"] = version
+        else:
+            out[key] = version
+    return out
 
 
 def _validate(cfg: Config) -> None:

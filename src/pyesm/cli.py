@@ -9,7 +9,14 @@ import shutil
 import sys
 
 from . import __version__, http
-from ._pyproject import add_dependency, remove_dependency, split_spec
+from ._pyproject import (
+    add_dependency,
+    add_subpath_dependency,
+    remove_dependency,
+    remove_subpath_dependency,
+    split_spec,
+    split_subpath,
+)
 from .config import load_config
 from .errors import PyesmError, StaleLockError
 from .importmap import build_import_map, dump_import_map, static_public_url
@@ -90,6 +97,15 @@ def _resolved_version(entry_url: str) -> str | None:
     ``@`` segment starting with a digit (a package scope never does)."""
     m = re.search(r"@(\d[^/?#]*)", entry_url)
     return m.group(1) if m else None
+
+
+def _write_dep(pyproject, package: str, range_: str, subpath: str) -> None:
+    """Write a dependency: a grouped inline table when it has a subpath, else
+    the plain ``package = "range"`` string form."""
+    if subpath:
+        add_subpath_dependency(pyproject, package, range_, subpath)
+    else:
+        add_dependency(pyproject, package, range_)
 
 
 def _protected_rel(cfg) -> set[str]:
@@ -185,14 +201,15 @@ def cmd_add(args, ctx: _Ctx) -> int:
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'add'")
     cfg = _load_config(ctx)
-    no_version: list[str] = []
-    for spec in args.packages:
-        name, range_ = split_spec(spec)
-        add_dependency(cfg.pyproject_path, name, range_)
+    no_version: list[tuple[str, str, str]] = []  # (specifier, package, subpath)
+    for arg in args.packages:
+        specifier, range_ = split_spec(arg)
+        pkg, subpath = split_subpath(specifier)
+        _write_dep(cfg.pyproject_path, pkg, range_, subpath)
         if range_:
-            ctx.info(f"added {name} = {range_}")
+            ctx.info(f"added {specifier} = {range_}")
         else:
-            no_version.append(name)
+            no_version.append((specifier, pkg, subpath))
 
     cfg = _load_config(ctx)  # reload with new deps
     lock = _do_resolve_and_write(cfg, ctx)
@@ -201,11 +218,11 @@ def cmd_add(args, ctx: _Ctx) -> int:
     # version (e.g. `react` -> `react = "^18.3.1"`), so pyproject records what
     # we vendored instead of an empty specifier.
     backfilled = False
-    for name in no_version:
-        version = _resolved_version(lock.imports.get(name, ""))
-        spec = f"^{version}" if version else ""
-        add_dependency(cfg.pyproject_path, name, spec)
-        ctx.info(f"added {name} = {spec or '(latest)'}")
+    for specifier, pkg, subpath in no_version:
+        version = _resolved_version(lock.imports.get(specifier, ""))
+        rng = f"^{version}" if version else ""
+        _write_dep(cfg.pyproject_path, pkg, rng, subpath)
+        ctx.info(f"added {specifier} = {rng or '(latest)'}")
         backfilled = backfilled or bool(version)
     if backfilled:
         # Only the specifier string changed, not the resolved graph; re-stamp
@@ -222,11 +239,13 @@ def cmd_remove(args, ctx: _Ctx) -> int:
     if ctx.frozen:
         raise PyesmError("--frozen cannot be used with 'remove'")
     cfg = _load_config(ctx)
-    for name in args.packages:
-        if remove_dependency(cfg.pyproject_path, name):
-            ctx.info(f"removed {name}")
-        else:
-            ctx.info(f"{name} not found in dependencies")
+    for arg in args.packages:
+        pkg, subpath = split_subpath(arg)
+        removed = bool(subpath) and remove_subpath_dependency(cfg.pyproject_path, pkg, subpath)
+        if not removed:
+            # plain package, or a subpath stored flat under its full specifier
+            removed = remove_dependency(cfg.pyproject_path, arg)
+        ctx.info(f"removed {arg}" if removed else f"{arg} not found in dependencies")
     cfg = _load_config(ctx)
     if cfg.dependencies:
         lock = _do_resolve_and_write(cfg, ctx)

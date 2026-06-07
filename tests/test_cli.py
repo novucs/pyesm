@@ -67,6 +67,26 @@ def test_add_mutates_pyproject_and_vendors(in_project):
     assert "scheduler" in lock["imports"]
 
 
+def test_add_subpaths_group_into_inline_table(in_project):
+    # the fake graph resolves these to scheduler@0.23.2; use its subpaths
+    assert main(["add", "scheduler/foo", "scheduler/bar"]) == 0
+    deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][
+        "dependencies"
+    ]
+    assert deps["scheduler"] == {"version": "^0.23.2", "subpaths": ["foo", "bar"]}
+    # both subpath specifiers are in the lock's imports, one shared package version
+    lock = json.loads((in_project / "pyesm.lock").read_text())
+    assert "scheduler/foo" in lock["imports"]
+    assert "scheduler/bar" in lock["imports"]
+    assert main(["--frozen", "sync"]) == 0  # not left stale
+
+    assert main(["remove", "scheduler/foo"]) == 0
+    deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][
+        "dependencies"
+    ]
+    assert deps["scheduler"]["subpaths"] == ["bar"]
+
+
 def test_add_without_version_backfills_caret_range(in_project):
     assert main(["add", "scheduler"]) == 0
     deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][

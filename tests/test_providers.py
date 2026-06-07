@@ -42,6 +42,39 @@ def test_esmsh_urls_keys_and_unpinned_query():
     )
 
 
+def test_jsdelivr_subpath_pins_package_version():
+    import asyncio
+
+    p = get_provider("jsdelivr")
+    # entry_url keeps the subpath after the package@range
+    assert p.entry_url("@codemirror/legacy-modes/mode/toml", "6.5.2", production=True) == (
+        "https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.2/mode/toml/+esm"
+    )
+
+    # resolve_entry pins the *package* version (via the data API) then appends
+    # the subpath; the get_json call must target the package, not the subpath.
+    seen = {}
+
+    async def fake_get_json(url):
+        seen["url"] = url
+        return {"version": "6.5.3"}
+
+    url = asyncio.run(
+        p.resolve_entry(
+            "@codemirror/legacy-modes/mode/toml", "", production=True, get_json=fake_get_json
+        )
+    )
+    assert "@codemirror/legacy-modes/resolved" in seen["url"]
+    assert url == "https://cdn.jsdelivr.net/npm/@codemirror/legacy-modes@6.5.3/mode/toml/+esm"
+
+
+def test_esmsh_subpath():
+    p = get_provider("esmsh")
+    assert p.entry_url("@codemirror/legacy-modes/mode/toml", "6.5.2", production=True) == (
+        "https://esm.sh/@codemirror/legacy-modes@6.5.2/mode/toml"
+    )
+
+
 def test_unknown_provider_rejected():
     import pytest
 

@@ -33,6 +33,15 @@ GRAPH: dict[str, tuple[str, bytes]] = {
     f"{J}/npm/react@18.2.0/+esm": (f"{J}/npm/react@18.2.0/+esm", REACT),
     f"{J}/npm/scheduler@0.23.2/+esm": (f"{J}/npm/scheduler@0.23.2/+esm", SCHEDULER),
     f"{J}/npm/react-dom@18.2.0/+esm": (f"{J}/npm/react-dom@18.2.0/+esm", REACT_DOM),
+    # scheduler subpaths, for exercising grouped subpath deps
+    f"{J}/npm/scheduler@0.23.2/foo/+esm": (
+        f"{J}/npm/scheduler@0.23.2/foo/+esm",
+        b"export default 1;",
+    ),
+    f"{J}/npm/scheduler@0.23.2/bar/+esm": (
+        f"{J}/npm/scheduler@0.23.2/bar/+esm",
+        b"export default 2;",
+    ),
     SHIM_URL: (SHIM_URL, SHIM),
 }
 

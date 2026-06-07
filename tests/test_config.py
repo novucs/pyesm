@@ -61,6 +61,61 @@ def test_inputs_hash_changes_with_provider(tmp_path):
     assert cfg.inputs_hash() != h1
 
 
+def test_table_dependencies_expand_to_subpaths(tmp_path):
+    _write(
+        tmp_path,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        react = "^18.2.0"
+        "@codemirror/legacy-modes" = { version = "^6.5.3", subpaths = ["mode/toml", "/mode/lua/"] }
+    """,
+    )
+    deps = load_config(tmp_path).dependencies
+    assert deps == {
+        "react": "^18.2.0",
+        "@codemirror/legacy-modes/mode/toml": "^6.5.3",
+        "@codemirror/legacy-modes/mode/lua": "^6.5.3",
+    }
+
+
+def test_table_and_equivalent_flat_hash_identically(tmp_path):
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    _write(
+        a,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        "@codemirror/legacy-modes" = { version = "^6.5.3", subpaths = ["mode/toml", "mode/lua"] }
+    """,
+    )
+    _write(
+        b,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        "@codemirror/legacy-modes/mode/toml" = "^6.5.3"
+        "@codemirror/legacy-modes/mode/lua" = "^6.5.3"
+    """,
+    )
+    assert load_config(a).inputs_hash() == load_config(b).inputs_hash()
+
+
+def test_malformed_table_dependency_rejected(tmp_path):
+    _write(
+        tmp_path,
+        """
+        [tool.pyesm]
+        [tool.pyesm.dependencies]
+        "x" = { version = "1", subpath = "a" }
+    """,
+    )
+    with pytest.raises(ConfigError, match="unknown keys"):
+        load_config(tmp_path)
+
+
 def test_inputs_hash_changes_with_shims(config: Config):
     h_auto = config.inputs_hash()
     config.shims = "never"

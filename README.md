@@ -20,7 +20,7 @@ $ pip install "pyesm[django]" # with the optional Django integration
 ```
 
 - **Python 3.12+.**
-- Runtime dependencies are minimal: just `httpx`.
+- Runtime dependencies are minimal: `httpx` and `tomlkit`.
 - **No Node toolchain and no compiled extensions**, ever.
 
 ---
@@ -83,7 +83,9 @@ All configuration lives under `[tool.pyesm]` in `pyproject.toml`.
 | `concurrency` | `16`                            | Max parallel downloads.                                                  |
 | `integrity`   | `true`                          | Emit the SRI `integrity` block in the import map.                        |
 
-Dependencies go in a separate table. Keys containing dots, slashes, or scopes must be quoted:
+Dependencies go in a separate table. Keys containing dots, slashes, or scopes must be quoted. Each
+value is a version range; the key is what you `import`. Deep imports work too — list a package's
+subpaths under one entry so they share a single pinned version:
 
 ```toml
 [tool.pyesm.dependencies]
@@ -91,8 +93,14 @@ react       = "^18.2.0"
 "react-dom" = "^18.2.0"
 lit         = "3"
 "htmx.org"  = "2"
-"@scope/pkg" = "1.2.3"
+
+# multiple subpaths of one package, one shared version (one vendored copy):
+lodash-es = { version = "^4.17.21", subpaths = ["debounce", "throttle", "cloneDeep"] }
 ```
+
+`pyesm add lodash-es/debounce` writes/merges that grouped table for you; plain packages stay in the
+`name = "range"` shorthand. (For long subpath lists, the equivalent nested form
+`[tool.pyesm.dependencies.lodash-es]` reads the same.)
 
 ---
 

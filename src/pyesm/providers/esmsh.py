@@ -21,8 +21,10 @@ class EsmShProvider(Provider):
     origin = ORIGIN
 
     def entry_url(self, name: str, range_: str, *, production: bool) -> str:
-        spec = f"{name}@{range_}" if range_ else name
-        url = f"{ORIGIN}/{spec}"
+        pkg, subpath = self._split_subpath(name)
+        spec = f"{pkg}@{range_}" if range_ else pkg
+        tail = f"/{subpath}" if subpath else ""
+        url = f"{ORIGIN}/{spec}{tail}"
         if not production:
             url += "?dev"
         return url

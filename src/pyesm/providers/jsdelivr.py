@@ -25,8 +25,10 @@ class JsDelivrProvider(Provider):
 
     def entry_url(self, name: str, range_: str, *, production: bool) -> str:
         # +esm has no prod/dev distinction; range may be empty (latest).
-        spec = f"{name}@{range_}" if range_ else name
-        return f"{ORIGIN}/npm/{spec}/+esm"
+        pkg, subpath = self._split_subpath(name)
+        spec = f"{pkg}@{range_}" if range_ else pkg
+        tail = f"/{subpath}" if subpath else ""
+        return f"{ORIGIN}/npm/{spec}{tail}/+esm"
 
     async def resolve_entry(
         self, name: str, range_: str, *, production: bool, get_json=None
@@ -34,11 +36,14 @@ class JsDelivrProvider(Provider):
         # jsDelivr's +esm endpoint serves range URLs with HTTP 200 (no redirect),
         # so we must pin the version ourselves via the data API. Otherwise a
         # caret range would vendor a *second*, unpinned copy alongside the pinned
-        # copy that sibling modules reference.
+        # copy that sibling modules reference. The version pins on the package;
+        # any subpath (e.g. .../debounce) is appended after it.
         if get_json is None:
             raise ResolveError("jsDelivr resolution requires an HTTP client")
-        version = await self._resolve_version(name, range_, get_json)
-        return f"{ORIGIN}/npm/{name}@{version}/+esm"
+        pkg, subpath = self._split_subpath(name)
+        version = await self._resolve_version(pkg, range_, get_json)
+        tail = f"/{subpath}" if subpath else ""
+        return f"{ORIGIN}/npm/{pkg}@{version}{tail}/+esm"
 
     async def _resolve_version(self, name: str, range_: str, get_json) -> str:
         rng = range_.strip()
