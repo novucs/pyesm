@@ -39,6 +39,38 @@ def test_shims_roundtrip(tmp_path):
     assert load_lock(path).shims is None
 
 
+def test_assets_and_stylesheets_roundtrip(tmp_path):
+    from pyesm.lockfile import Asset
+
+    lock = _lock()
+    lock.assets = [
+        Asset(
+            url="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css",
+            path="katex@0.16.9/dist/katex.min.css",
+            integrity="sha384-css",
+        ),
+        Asset(
+            url="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/X.woff2",
+            path="katex@0.16.9/dist/fonts/X.woff2",
+            integrity="sha384-font",
+        ),
+    ]
+    lock.stylesheets = ["katex@0.16.9/dist/katex.min.css"]
+    path = tmp_path / "pyesm.lock"
+    dump_lock(lock, path)
+    loaded = load_lock(path)
+    assert {a.path for a in loaded.assets} == {
+        "katex@0.16.9/dist/katex.min.css",
+        "katex@0.16.9/dist/fonts/X.woff2",
+    }
+    assert loaded.stylesheets == ["katex@0.16.9/dist/katex.min.css"]
+    # absent -> keys omitted entirely (old locks still load)
+    lock.assets, lock.stylesheets = [], []
+    dump_lock(lock, path)
+    raw = path.read_text()
+    assert "assets" not in raw and "stylesheets" not in raw
+
+
 def test_roundtrip(tmp_path):
     path = tmp_path / "pyesm.lock"
     dump_lock(_lock(), path)

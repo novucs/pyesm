@@ -26,6 +26,17 @@ class JsDelivrProvider(Provider):
     name = "jsdelivr"
     origin = ORIGIN
     supports_dedup = True
+    supports_assets = True
+
+    def asset_url(self, pkg: str, version: str, subpath: str) -> str:
+        return f"{ORIGIN}/npm/{pkg}@{version}/{subpath}"
+
+    def asset_local_path(self, url: str) -> str:
+        # /npm/katex@0.16.9/dist/katex.min.css -> katex@0.16.9/dist/katex.min.css
+        path = urlsplit(url).path
+        if path.startswith("/npm/"):
+            path = path[len("/npm/") :]
+        return path.lstrip("/")
 
     def entry_url(self, name: str, range_: str, *, production: bool) -> str:
         # +esm has no prod/dev distinction; range may be empty (latest).

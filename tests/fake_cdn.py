@@ -34,6 +34,15 @@ SHIM = b"/* es-module-shims mock */(function(){})();"
 # track the provider's real shims URL so the fake never drifts from it
 SHIM_URL = get_provider("jsdelivr").shims_url(ESMS_VERSION)
 
+# A raw CSS dep with a relative font ref (the CSS pathway) + a @import of a
+# sibling stylesheet, exercising recursion and structure-preserving vendoring.
+WIDGET_CSS = (
+    b'@import "base.css";\n.w{background:url(fonts/widget.woff2)}'
+    b";.x{mask:url('data:image/svg+xml,<svg/>')}"  # data: URI is left untouched
+)
+WIDGET_BASE_CSS = b".w{margin:0}"
+WIDGET_FONT = b"FONT-BYTES"
+
 # request URL -> (canonical URL after redirects, raw bytes). Entry URLs are
 # already version-pinned because jsDelivr pinning happens via the data API
 # (see VERSIONS / fake_get_json) before crawling.
@@ -51,16 +60,30 @@ GRAPH: dict[str, tuple[str, bytes]] = {
         b"export default 2;",
     ),
     SHIM_URL: (SHIM_URL, SHIM),
+    # raw CSS assets (no +esm): the entry css, its @import, and a font
+    f"{J}/npm/widget@1.0.0/dist/widget.css": (
+        f"{J}/npm/widget@1.0.0/dist/widget.css",
+        WIDGET_CSS,
+    ),
+    f"{J}/npm/widget@1.0.0/dist/base.css": (
+        f"{J}/npm/widget@1.0.0/dist/base.css",
+        WIDGET_BASE_CSS,
+    ),
+    f"{J}/npm/widget@1.0.0/dist/fonts/widget.woff2": (
+        f"{J}/npm/widget@1.0.0/dist/fonts/widget.woff2",
+        WIDGET_FONT,
+    ),
 }
 
 # What the jsDelivr data API resolves each package name to (range -> latest).
-VERSIONS = {"react": "18.2.0", "react-dom": "18.2.0", "scheduler": "0.23.2"}
+VERSIONS = {"react": "18.2.0", "react-dom": "18.2.0", "scheduler": "0.23.2", "widget": "1.0.0"}
 
 # Published version lists (for the backtracking resolver's enumeration).
 VERSION_LISTS = {
     "react": ["18.2.0"],
     "react-dom": ["18.2.0"],
     "scheduler": ["0.23.2"],
+    "widget": ["1.0.0"],
 }
 
 # package.json dependency ranges, for the npm-semver resolver.
@@ -71,6 +94,7 @@ MANIFESTS: dict[tuple[str, str], dict] = {
         "peerDependencies": {"react": "^18.2.0"},
     },
     ("scheduler", "0.23.2"): {},
+    ("widget", "1.0.0"): {},
 }
 
 

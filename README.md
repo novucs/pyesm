@@ -102,6 +102,40 @@ sigma/rendering` sets this for you, so both `sigma` and `sigma/rendering` resolv
 
 ---
 
+## CSS dependencies
+
+A dependency whose specifier ends in `.css` is vendored as a stylesheet rather than a JS module. Point
+at the package's CSS file:
+
+```console
+$ pyesm add katex/dist/katex.min.css
+```
+
+pyesm vendors the raw CSS **plus its `@import` / `url()` closure** (fonts, images, imported stylesheets),
+preserving the directory structure so the relative references resolve against the vendored copies. Nothing
+is rewritten inside the files, and every asset is integrity-checked and pinned in the lock like any module.
+
+You reference the result with `<link>` rather than the import map:
+
+- **Static mode**: `pyesm build`/`sync` writes a `stylesheets.html` snippet (path configurable via the
+  `stylesheets` key, default `static/pyesm/stylesheets.html`) of ready-to-use tags. Include or serve it:
+
+  ```html
+  <link rel="stylesheet" href="/static/pyesm/katex@0.16.9/dist/katex.min.css"
+        integrity="sha384-…" crossorigin>
+  ```
+
+- **Django**: `{% pyesm_stylesheets %}` emits the `<link>` tags through `staticfiles` storage, so they
+  survive `ManifestStaticFilesStorage` / WhiteNoise hashing.
+
+**SRI note:** in static mode the `<link>` carries an `integrity` attribute. Under Django's
+`ManifestStaticFilesStorage`, CSS is *rewritten* at `collectstatic` (it hashes the `url()` font/image
+names), so the `<link>` is emitted **without** SRI; the storage's content-hashed filenames provide the
+cache-busting instead. External `url()`/`@import` references (e.g. Google Fonts) are left untouched and
+remain a runtime dependency. CSS is supported on the `jsdelivr` provider.
+
+---
+
 ## CLI reference
 
 The single entry point is `pyesm`. Running it bare prints help.
@@ -297,6 +331,8 @@ Switch per-run with `--provider`, or set `provider` in config.
 - CDN output (`+esm`, esm.sh transforms) is **not guaranteed byte-stable** across CDN updates. That's
   fine at serve time because you host your own frozen copy, but a `sync` that finds a hash mismatch
   against a still-pinned URL **fails loudly** rather than silently overwriting.
+- **CSS** is vendored on the `jsdelivr` provider only; external `url()`/`@import` references are left as
+  runtime dependencies; `<link>` order is sorted (cross-library cascade order isn't yet controllable).
 
 ---
 

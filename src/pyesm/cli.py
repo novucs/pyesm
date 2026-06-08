@@ -26,6 +26,7 @@ from .importmap import build_import_map, dump_import_map, static_public_url
 from .lockfile import Lock, dump_lock, load_lock
 from .providers import get_provider
 from .resolve import resolve
+from .stylesheets import dump_stylesheets_html, render_stylesheets
 from .vendor import sync
 
 
@@ -128,12 +129,13 @@ def _write_dep(pyproject, package: str, range_: str, subpath: str) -> None:
 
 
 def _protected_rel(cfg) -> set[str]:
-    """importmap.json path relative to output-dir, so prune never deletes it."""
-    try:
-        rel = cfg.importmap_path.relative_to(cfg.output_path).as_posix()
-        return {rel}
-    except ValueError:
-        return set()
+    """Generated files (importmap.json, stylesheets.html) under output-dir, so
+    prune never deletes them."""
+    protected: set[str] = set()
+    for path in (cfg.importmap_path, cfg.stylesheets_path):
+        with contextlib.suppress(ValueError):
+            protected.add(path.relative_to(cfg.output_path).as_posix())
+    return protected
 
 
 def _do_resolve_and_write(cfg, ctx: _Ctx):
@@ -147,9 +149,19 @@ def _do_resolve_and_write(cfg, ctx: _Ctx):
 
 
 def _build_static_map(cfg, lock, ctx: _Ctx) -> None:
-    import_map = build_import_map(lock, static_public_url(cfg.base_url), integrity=cfg.integrity)
+    public_url = static_public_url(cfg.base_url)
+    import_map = build_import_map(lock, public_url, integrity=cfg.integrity)
     dump_import_map(import_map, cfg.importmap_path)
     ctx.detail(f"wrote {cfg.importmap_path}")
+
+    # Stylesheets: write the <link> snippet when there are any, else clean up a
+    # stale one so a project that dropped its CSS deps doesn't keep it around.
+    if lock.stylesheets:
+        html = render_stylesheets(lock, public_url, integrity=cfg.integrity)
+        dump_stylesheets_html(html, cfg.stylesheets_path)
+        ctx.detail(f"wrote {cfg.stylesheets_path}")
+    else:
+        cfg.stylesheets_path.unlink(missing_ok=True)
 
 
 def _do_sync(cfg, lock, ctx: _Ctx):
@@ -161,8 +173,10 @@ def _do_sync(cfg, lock, ctx: _Ctx):
         concurrency=cfg.concurrency,
     )
     _build_static_map(cfg, lock, ctx)
-    msg = f"synced {len(lock.modules)} modules "
-    msg += f"({report.downloaded} downloaded, {report.reused} cached)"
+    counts = f"{len(lock.modules)} modules"
+    if lock.stylesheets:
+        counts += f", {len(lock.stylesheets)} stylesheets"
+    msg = f"synced {counts} ({report.downloaded} downloaded, {report.reused} cached)"
     if report.pruned:
         msg += f", pruned {len(report.pruned)}"
     ctx.info(msg)

@@ -30,6 +30,20 @@ class Provider(abc.ABC):
     # (esm.sh) leave this False and keep their own pins.
     supports_dedup: bool = False
 
+    # Whether this provider can vendor raw assets (CSS + its url()/@import
+    # closure) for `<link>` stylesheets, not just ESM modules.
+    supports_assets: bool = False
+
+    def asset_url(self, pkg: str, version: str, subpath: str) -> str:
+        """Raw (untransformed) file URL for ``pkg@version/subpath`` (e.g. a CSS
+        file), as opposed to the ESM-transformed :meth:`build_module`."""
+        raise NotImplementedError
+
+    def asset_local_path(self, url: str) -> str:
+        """Local path for a vendored raw asset, extension preserved (unlike
+        :meth:`local_path`, which forces ``.js``)."""
+        raise NotImplementedError
+
     async def resolve_version(self, pkg: str, range_: str, *, get_json) -> str:
         """Resolve ``pkg@range`` to a single pinned version string."""
         raise NotImplementedError

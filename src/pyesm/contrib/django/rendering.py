@@ -18,8 +18,10 @@ from ...config import Config, find_project_root, load_config
 from ...importmap import build_import_map
 from ...lockfile import Lock, load_lock
 from ...shims import shims_script_tag, should_inject
+from ...stylesheets import render_stylesheets as _render_stylesheets
 
 _cache: dict | None = None
+_css_cache: dict | None = None
 
 
 def _project_root() -> Path:
@@ -82,6 +84,27 @@ def render_import_map(*, force: bool = False) -> str:
     return html
 
 
+def render_stylesheets(*, force: bool = False) -> str:
+    """Return the ``<link rel="stylesheet">`` tags (staticfiles-hashed URLs).
+
+    Cached per process, keyed by the staticfiles manifest version.
+    """
+    global _css_cache
+    version = _manifest_version()
+    if not force and _css_cache is not None and _css_cache["version"] == version:
+        return _css_cache["html"]
+
+    _cfg, lock = _load()
+    # No SRI here: ManifestStaticFilesStorage rewrites url()/@import inside CSS
+    # during collectstatic (to hash font/image names), so an integrity computed
+    # over the pre-collect bytes would never match the served file. The storage's
+    # content-hashed filenames provide the cache-busting/addressing instead.
+    html = _render_stylesheets(lock, _django_public_url(), integrity=False)
+    _css_cache = {"version": version, "html": html}
+    return html
+
+
 def clear_cache() -> None:
-    global _cache
+    global _cache, _css_cache
     _cache = None
+    _css_cache = None

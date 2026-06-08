@@ -9,10 +9,12 @@ import asyncio
 from collections.abc import Callable
 
 from . import http
+from .assets import AssetCrawler
 from .config import Config
 from .crawler import Crawler, FetchFn
+from .errors import ResolveError
 from .hashing import sri_hash
-from .lockfile import Lock, Module, ShimAsset
+from .lockfile import Asset, Lock, Module, ShimAsset
 from .providers import get_provider
 from .resolver import resolve_graph
 from .shims import ESMS_VERSION, should_inject
@@ -50,6 +52,12 @@ async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
         (specifier, *provider._split_subpath(specifier), str(range_).strip())
         for specifier, range_ in config.dependencies.items()
     ]
+    # A `.css` specifier is a stylesheet (raw asset + <link>); everything else
+    # is an ESM module (import map).
+    css_deps = [d for d in user_deps if d[0].endswith(".css")]
+    js_deps = [d for d in user_deps if not d[0].endswith(".css")]
+    if css_deps and not provider.supports_assets:
+        raise ResolveError(f"provider {prov_name!r} does not support CSS dependencies")
 
     # Resolve the whole graph to one version per package (semver dedup), and
     # build a rewrite that maps any in-byte module URL to the resolved version.
@@ -82,9 +90,9 @@ async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
 
         rewrite = _rewrite
 
-    # Entry request URL per user dependency (from the resolved version).
+    # Entry request URL per JS dependency (from the resolved version).
     entry_requests: dict[str, str] = {}
-    for specifier, pkg, subpath, rng in user_deps:
+    for specifier, pkg, subpath, rng in js_deps:
         ver = resolved.get(pkg)
         if ver is not None:
             entry_requests[specifier] = provider.build_module(pkg, ver, subpath)
@@ -114,6 +122,18 @@ async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
         for cm in result.modules.values()
     ]
 
+    # CSS pathway: vendor each .css entry plus its url()/@import asset closure.
+    assets: list[Asset] = []
+    stylesheets: list[str] = []
+    if css_deps:
+        css_entries = []
+        for _, pkg, subpath, rng in css_deps:
+            ver = resolved.get(pkg) or await provider.resolve_version(pkg, rng, get_json=get_json)
+            css_entries.append(provider.asset_url(pkg, ver, subpath))
+        asset_crawler = AssetCrawler(provider, fetch=fetch, concurrency=config.concurrency)
+        asset_map, stylesheets = await asset_crawler.crawl(css_entries)
+        assets = [Asset(url=u, path=p, integrity=i) for u, (p, i) in asset_map.items()]
+
     shims = None
     if should_inject(config.shims):
         shims_url = provider.shims_url(ESMS_VERSION)
@@ -130,6 +150,8 @@ async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
         imports=imports,
         modules=modules,
         shims=shims,
+        assets=assets,
+        stylesheets=stylesheets,
     )
 
 

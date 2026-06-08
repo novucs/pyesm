@@ -18,6 +18,7 @@ _DEFAULTS = {
     "output-dir": "static/pyesm",
     "base-url": "/static/pyesm/",
     "importmap": "static/pyesm/importmap.json",
+    "stylesheets": "static/pyesm/stylesheets.html",
     "production": True,
     "shims": "auto",
     "concurrency": 16,
@@ -36,6 +37,7 @@ class Config:
     output_dir: str = "static/pyesm"
     base_url: str = "/static/pyesm/"
     importmap: str = "static/pyesm/importmap.json"
+    stylesheets: str = "static/pyesm/stylesheets.html"
     production: bool = True
     shims: str = "auto"
     concurrency: int = 16
@@ -49,6 +51,10 @@ class Config:
     @property
     def importmap_path(self) -> Path:
         return (self.project_root / self.importmap).resolve()
+
+    @property
+    def stylesheets_path(self) -> Path:
+        return (self.project_root / self.stylesheets).resolve()
 
     @property
     def lock_path(self) -> Path:
@@ -104,6 +110,7 @@ def load_config(project_root: Path | None = None) -> Config:
         output_dir=str(merged["output-dir"]),
         base_url=str(merged["base-url"]),
         importmap=str(merged["importmap"]),
+        stylesheets=str(merged["stylesheets"]),
         production=bool(merged["production"]),
         shims=str(merged["shims"]),
         concurrency=int(merged["concurrency"]),

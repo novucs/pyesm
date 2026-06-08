@@ -41,6 +41,7 @@ def django_project(tmp_path_factory):
             [tool.pyesm.dependencies]
             react = "^18.2.0"
             "react-dom" = "^18.2.0"
+            "widget/dist/widget.css" = "^1.0.0"
             """
         ).lstrip(),
         encoding="utf-8",
@@ -102,6 +103,26 @@ def _render(django_project):
 
     tpl = Template("{% load pyesm %}{% pyesm_importmap %}")
     return tpl.render(Context({}))
+
+
+def test_stylesheets_tag_renders_hashed_links(django_project):
+    import re
+
+    from django.template import Context, Template
+
+    html = Template("{% load pyesm %}{% pyesm_stylesheets %}").render(Context({}))
+    assert '<link rel="stylesheet"' in html
+    # href is a staticfiles-hashed URL under /static/pyesm/
+    m = re.search(r'href="([^"]+)"', html)
+    assert m is not None
+    href = m.group(1)
+    assert href.startswith("/static/pyesm/widget@1.0.0/dist/widget.") and href.endswith(".css")
+    assert href != "/static/pyesm/widget@1.0.0/dist/widget.css"  # hashed
+    # no SRI: ManifestStaticFilesStorage rewrites url() inside CSS at collectstatic
+    assert "integrity=" not in html
+    # the hashed file exists in STATIC_ROOT
+    served = django_project["static_root"] / href[len("/static/") :]
+    assert served.is_file()
 
 
 def test_template_tag_renders_hashed_urls_with_integrity(django_project):

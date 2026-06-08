@@ -52,7 +52,7 @@ async def sync_async(
     cache = cache or Cache()
     protect = protect or set()
     report = SyncReport()
-    items = [*lock.modules, *([lock.shims] if lock.shims is not None else [])]
+    items = [*lock.modules, *lock.assets, *([lock.shims] if lock.shims is not None else [])]
 
     # Phase 1: ensure every item is in the cache, verified. No output mutation.
     if fetch is None and not offline:

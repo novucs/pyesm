@@ -67,6 +67,26 @@ def test_add_mutates_pyproject_and_vendors(in_project):
     assert "scheduler" in lock["imports"]
 
 
+def test_add_css_dependency_vendors_assets_and_links(in_project):
+    assert main(["add", "widget/dist/widget.css"]) == 0
+    lock = json.loads((in_project / "pyesm.lock").read_text())
+    assert lock["stylesheets"] == ["widget@1.0.0/dist/widget.css"]
+
+    # the css, its @import, and the relative font are vendored at preserved paths
+    dist = in_project / "static/pyesm/widget@1.0.0/dist"
+    assert (dist / "widget.css").is_file()
+    assert (dist / "base.css").is_file()
+    assert (dist / "fonts/widget.woff2").is_file()
+
+    # stylesheets.html carries the <link> with SRI
+    html = (in_project / "static/pyesm/stylesheets.html").read_text()
+    assert '<link rel="stylesheet"' in html
+    assert "/static/pyesm/widget@1.0.0/dist/widget.css" in html
+    assert 'integrity="sha384-' in html and "crossorigin" in html
+
+    assert main(["--frozen", "sync"]) == 0  # integrity over raw assets holds
+
+
 def test_atomic_files_rollback(tmp_path):
     from pyesm.cli import _atomic_files
 

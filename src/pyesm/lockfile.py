@@ -48,6 +48,15 @@ class ShimAsset:
 
 
 @dataclass
+class Asset:
+    """One vendored raw asset (a CSS file, font, or image): url, path, integrity."""
+
+    url: str
+    path: str
+    integrity: str
+
+
+@dataclass
 class Lock:
     """Top-level lockfile contents."""
 
@@ -56,6 +65,10 @@ class Lock:
     imports: dict[str, str] = field(default_factory=dict)  # bare specifier -> url
     modules: list[Module] = field(default_factory=list)
     shims: ShimAsset | None = None
+    # CSS pathway: every vendored CSS/font/image, plus the entry stylesheet paths
+    # the consumer should ``<link>`` (a subset of ``assets`` by path).
+    assets: list[Asset] = field(default_factory=list)
+    stylesheets: list[str] = field(default_factory=list)
     version: int = LOCK_VERSION
 
     def module_by_url(self, url: str) -> Module | None:
@@ -89,6 +102,13 @@ class Lock:
                 "path": self.shims.path,
                 "integrity": self.shims.integrity,
             }
+        if self.assets:
+            out["assets"] = [
+                {"url": a.url, "path": a.path, "integrity": a.integrity}
+                for a in sorted(self.assets, key=lambda a: a.url)
+            ]
+        if self.stylesheets:
+            out["stylesheets"] = sorted(self.stylesheets)
         return out
 
     def to_json(self) -> str:
@@ -115,6 +135,11 @@ class Lock:
                 for m in data.get("modules", [])
             ],
             shims=ShimAsset(shims["url"], shims["path"], shims["integrity"]) if shims else None,
+            assets=[
+                Asset(url=a["url"], path=a["path"], integrity=a["integrity"])
+                for a in data.get("assets", [])
+            ],
+            stylesheets=list(data.get("stylesheets", [])),
         )
 
 
