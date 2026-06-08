@@ -10,13 +10,19 @@ from __future__ import annotations
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from pyesm.providers import get_provider
 from pyesm.shims import ESMS_VERSION
 
 J = "https://cdn.jsdelivr.net"
 
 # Module bodies. react-dom references its siblings by *root-relative* path,
 # exactly like real jsDelivr +esm output.
-REACT = b'export default {name:"react"};'
+# a jsDelivr-style build banner (stripped at fetch time)
+_BANNER = (
+    b"/**\n * Bundled by jsDelivr using Rollup v2.79.2 and Terser v5.48.0.\n"
+    b" * Do NOT use SRI with dynamically generated files!\n */\n"
+)
+REACT = _BANNER + b'export default {name:"react"};'
 # trailing source-map comment, as jsDelivr appends; stripped at fetch time
 SCHEDULER = b'export default {name:"scheduler"};\n//# sourceMappingURL=/sm/abc123.map'
 REACT_DOM = (
@@ -25,7 +31,8 @@ REACT_DOM = (
     b'export default {name:"react-dom"};'
 )
 SHIM = b"/* es-module-shims mock */(function(){})();"
-SHIM_URL = f"{J}/npm/es-module-shims@{ESMS_VERSION}/dist/es-module-shims.js"
+# track the provider's real shims URL so the fake never drifts from it
+SHIM_URL = get_provider("jsdelivr").shims_url(ESMS_VERSION)
 
 # request URL -> (canonical URL after redirects, raw bytes). Entry URLs are
 # already version-pinned because jsDelivr pinning happens via the data API

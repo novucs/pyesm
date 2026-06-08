@@ -18,7 +18,7 @@ def test_jsdelivr_urls_and_keys():
     )
     assert (
         p.shims_url("1.10.0")
-        == "https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.js"
+        == "https://cdn.jsdelivr.net/npm/es-module-shims@1.10.0/dist/es-module-shims.min.js"
     )
 
 

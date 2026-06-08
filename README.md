@@ -62,10 +62,12 @@ The design follows four load-bearing decisions:
    by *root-relative* path (e.g. `/npm/react@18.3.1/+esm`). pyesm adds each such specifier to the
    import map as a key pointing at the local vendored copy. The browser resolves the specifier against
    your site's origin and the map transparently redirects it to the local file. Vendored `.js` is
-   written as fetched, with one exception: a trailing `//# sourceMappingURL=…` comment is stripped,
-   because CDN `+esm` bundles point it at a CDN-only `/sm/…` path that 404s once self-hosted (inline
-   `data:` maps are kept). Cross-module imports are never rewritten — the import map is the only
-   relocation layer.
+   written as fetched, except that two pieces of CDN-injected boilerplate are dropped: the trailing
+   `//# sourceMappingURL=…` comment (a CDN-only `/sm/…` path that 404s once self-hosted; inline `data:`
+   maps are kept), and jsDelivr's leading build banner (volatile `Rollup vX … Terser vY` versions that
+   would needlessly churn the integrity hash, plus a "do not use SRI" notice aimed at dynamic CDN
+   loading, not self-hosted copies). A package's own `/*! @license … */` header is never touched, and
+   cross-module imports are never rewritten — the import map is the only relocation layer.
 3. **No fragile relative edges.** Because cross-module references are absolute (root-relative) paths,
    the import map is the single indirection layer; there is nothing to rewrite inside the files.
 4. **Integrity is computed over the vendored bytes.** Every module gets a `sha384` stored in the lock;
@@ -204,8 +206,8 @@ polyfill to extend runtime enforcement, controlled by `shims`:
 - `never`: don't vendor or inject.
 
 The polyfill is **vendored** like every other file: downloaded once (at lock/sync) from the
-configured provider, stored in the lock with its own `sha384`, and served from `output-dir` with an
-`integrity` attribute. Production makes no CDN request for it. In Django mode the `<script>` tag is
+configured provider (the minified ~43KB build on jsDelivr), stored in the lock with its own `sha384`,
+and served from `output-dir` with an `integrity` attribute. Production makes no CDN request for it. In Django mode the `<script>` tag is
 emitted for you; in static mode reference the vendored file yourself
 (`<base-url>es-module-shims@<version>.js`, integrity in the lock).
 

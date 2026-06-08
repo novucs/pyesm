@@ -101,4 +101,6 @@ class JsDelivrProvider(Provider):
         return path
 
     def shims_url(self, version: str) -> str:
-        return f"{ORIGIN}/npm/es-module-shims@{version}/dist/es-module-shims.js"
+        # es-module-shims ships only an unminified main (~79KB); jsDelivr minifies
+        # it on the fly to ~43KB. We vendor + freeze that, stripping its banner.
+        return f"{ORIGIN}/npm/es-module-shims@{version}/dist/es-module-shims.min.js"
