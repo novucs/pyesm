@@ -103,6 +103,16 @@ def _resolved_version(entry_url: str) -> str | None:
     return m.group(1) if m else None
 
 
+_NPM_PKG_VER = re.compile(r"/npm/(.+?)@(\d[^/]*)")
+
+
+def _npm_pkg_version(url: str) -> tuple[str, str] | None:
+    """Extract ``(package, version)`` from a ``/npm/<pkg>@<ver>/…`` URL
+    (works for both ``+esm`` modules and raw asset URLs); None if it isn't one."""
+    m = _NPM_PKG_VER.search(url)
+    return (m.group(1), m.group(2)) if m else None
+
+
 @contextlib.contextmanager
 def _atomic_files(*paths: Path) -> Iterator[None]:
     """Snapshot ``paths`` and restore them if the block raises, so a failed
@@ -312,10 +322,24 @@ def cmd_outdated(args, ctx: _Ctx) -> int:
         raise PyesmError("cannot check outdated while --offline")
     cfg = _load_config(ctx)
     lock = _load_lock_or_fail(cfg, ctx)
-    locked = dict(lock.imports) if lock else {}
     provider = get_provider(cfg.provider)
 
-    async def pin_all():
+    # Locked version per package, read from the JS entry URLs and the CSS asset
+    # URLs in the lock (subpaths of a package all share one version).
+    locked: dict[str, str] = {}
+    if lock is not None:
+        for url in (*lock.imports.values(), *(a.url for a in lock.assets)):
+            pv = _npm_pkg_version(url)
+            if pv is not None:
+                locked[pv[0]] = pv[1]
+
+    # One representative range per package.
+    ranges: dict[str, str] = {}
+    for name, range_ in cfg.dependencies.items():
+        pkg, _sub = provider._split_subpath(name)
+        ranges.setdefault(pkg, str(range_).strip())
+
+    async def newest_all():
         async with http.make_client(cfg.concurrency) as client:
 
             async def get_json(u):
@@ -323,27 +347,26 @@ def cmd_outdated(args, ctx: _Ctx) -> int:
                 resp.raise_for_status()
                 return resp.json()
 
-            out = {}
-            for name, range_ in cfg.dependencies.items():
-                out[name] = await provider.resolve_entry(
-                    name,
-                    str(range_).strip(),
-                    production=cfg.production,
-                    get_json=get_json,
-                )
-            return out
+            async def one(pkg, rng):
+                try:
+                    return pkg, await provider.resolve_version(pkg, rng, get_json=get_json)
+                except Exception:  # best-effort: unresolved/unsupported -> unknown
+                    return pkg, None
 
-    pinned = asyncio.run(pin_all())
-    rows: list[tuple[str, str, str]] = []
-    for name in cfg.dependencies:
-        current = locked.get(name, "?")
-        if pinned[name] != current:
-            rows.append((name, current, pinned[name]))
+            return dict(await asyncio.gather(*(one(p, r) for p, r in ranges.items())))
+
+    newest = asyncio.run(newest_all())
+
+    rows = [
+        (pkg, locked.get(pkg, "?"), newest.get(pkg) or "?")
+        for pkg in sorted(ranges)
+        if (newest.get(pkg) or "?") != locked.get(pkg, "?")
+    ]
     if not rows:
         ctx.info("all dependencies are up to date")
     else:
-        for name, cur, new in rows:
-            ctx.info(f"{name}\n  locked:  {cur}\n  newest:  {new}")
+        for pkg, cur, new in rows:
+            ctx.info(f"{pkg}\n  locked:  {cur}\n  newest:  {new}")
     return 0
 
 
