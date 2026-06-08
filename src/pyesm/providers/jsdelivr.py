@@ -14,6 +14,9 @@ from .base import Provider
 
 ORIGIN = "https://cdn.jsdelivr.net"
 DATA_API = "https://data.jsdelivr.com/v1/packages/npm"
+# The singular endpoint returns versions as plain strings (no per-version
+# `links`), ~10x smaller than the plural one — all the resolver needs.
+DATA_API_PKG = "https://data.jsdelivr.com/v1/package/npm"
 
 # Characters that mean a value is a range/tag rather than an exact version.
 _RANGE_CHARS = set("^~*xX <>=|| -")
@@ -61,7 +64,7 @@ class JsDelivrProvider(Provider):
         return str(version)
 
     def versions_url(self, pkg: str) -> str:
-        return f"{DATA_API}/{pkg}"
+        return f"{DATA_API_PKG}/{pkg}"
 
     def manifest_url(self, pkg: str, version: str) -> str:
         return f"{ORIGIN}/npm/{pkg}@{version}/package.json"

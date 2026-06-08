@@ -59,10 +59,8 @@ async def _resolve(config, prov_name, provider, fetch, get_json) -> Lock:
 
         async def _fetch_packument(pkg: str) -> dict:
             data = await get_json(provider.versions_url(pkg))
-            return {
-                "versions": [v["version"] for v in data.get("versions", [])],
-                "tags": data.get("tags", {}),
-            }
+            # the singular endpoint already gives version strings
+            return {"versions": data.get("versions", []), "tags": data.get("tags", {})}
 
         async def _fetch_manifest(pkg: str, ver: str) -> dict:
             return await get_json(provider.manifest_url(pkg, ver))

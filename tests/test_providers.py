@@ -78,7 +78,7 @@ def test_esmsh_subpath():
 def test_jsdelivr_parse_build_manifest():
     p = get_provider("jsdelivr")
     assert p.supports_dedup is True
-    assert p.versions_url("react") == "https://data.jsdelivr.com/v1/packages/npm/react"
+    assert p.versions_url("react") == "https://data.jsdelivr.com/v1/package/npm/react"
     assert p.manifest_url("react", "18.3.1") == (
         "https://cdn.jsdelivr.net/npm/react@18.3.1/package.json"
     )

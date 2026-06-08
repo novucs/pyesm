@@ -55,6 +55,25 @@ def _ver(v: str) -> Version:
         return Version.coerce(v)
 
 
+def _latest(versions: list[str]) -> str | None:
+    """Highest non-prerelease version (falling back to prereleases if that's all)."""
+    parsed = [_ver(v) for v in versions]
+    pool = [v for v in parsed if not v.prerelease] or parsed
+    return str(max(pool)) if pool else None
+
+
+def _manifest_requirements(manifest: dict) -> list[_Req]:
+    """The deps a bundle imports: ``dependencies`` + non-optional ``peerDependencies``."""
+    out: list[_Req] = []
+    for name, rng in (manifest.get("dependencies") or {}).items():
+        out.append(_Req(str(name), str(rng)))
+    meta = manifest.get("peerDependenciesMeta") or {}
+    for name, rng in (manifest.get("peerDependencies") or {}).items():
+        if not (meta.get(name) or {}).get("optional"):
+            out.append(_Req(str(name), str(rng)))
+    return out
+
+
 class _NpmProvider(AbstractProvider):
     def __init__(self, packument, manifest) -> None:
         self._packument = packument  # sync (pkg) -> {"versions", "tags"}
@@ -90,15 +109,35 @@ class _NpmProvider(AbstractProvider):
         return self._matches(requirement, candidate.version)
 
     def get_dependencies(self, candidate):
-        manifest = self._manifest(candidate.name, candidate.version)
-        out: list[_Req] = []
-        for name, rng in (manifest.get("dependencies") or {}).items():
-            out.append(_Req(str(name), str(rng)))
-        meta = manifest.get("peerDependenciesMeta") or {}
-        for name, rng in (manifest.get("peerDependencies") or {}).items():
-            if not (meta.get(name) or {}).get("optional"):
-                out.append(_Req(str(name), str(rng)))
-        return out
+        return _manifest_requirements(self._manifest(candidate.name, candidate.version))
+
+
+async def _prewarm(roots, packument, manifest, concurrency: int) -> None:
+    """Best-effort concurrent BFS over the dependency closure to fill the
+    packument/manifest caches before resolvelib's serial exploration. Per-package
+    errors are swallowed — resolvelib lazily fetches (and surfaces) any miss."""
+    sem = asyncio.Semaphore(concurrency)
+    seen: set[str] = set()
+
+    async def warm(pkg: str) -> list[str]:
+        try:
+            async with sem:
+                pk = await packument(pkg)
+            ver = _latest(pk.get("versions") or [])
+            if ver is None:
+                return []
+            async with sem:
+                mf = await manifest(pkg, ver)
+        except Exception:
+            return []
+        return [r.name for r in _manifest_requirements(mf)]
+
+    frontier = set(roots)
+    while frontier:
+        fresh = frontier - seen
+        seen |= fresh
+        results = await asyncio.gather(*(warm(p) for p in fresh))
+        frontier = {name for names in results for name in names}
 
 
 async def resolve_graph(
@@ -106,7 +145,7 @@ async def resolve_graph(
     *,
     fetch_packument: FetchPackument,
     fetch_manifest: FetchManifest,
-    concurrency: int = 16,  # noqa: ARG001 - resolvelib explores sequentially
+    concurrency: int = 16,
 ) -> dict[str, str]:
     """Return ``{package -> version}`` for the whole graph (backtracking).
 
@@ -133,6 +172,11 @@ async def resolve_graph(
         return asyncio.run_coroutine_threadsafe(_manifest(pkg, ver), loop).result()
 
     provider = _NpmProvider(packument, manifest)
+
+    # resolvelib explores serially through the executor bridge, so fetch the
+    # whole dependency closure's metadata concurrently up front; resolvelib then
+    # resolves against the warm caches with no serial network round-trips.
+    await _prewarm({pkg for pkg, _ in deps}, _packument, _manifest, concurrency)
 
     def run() -> dict[str, str]:
         result = Resolver(provider, BaseReporter()).resolve([_Req(pkg, rng) for pkg, rng in deps])

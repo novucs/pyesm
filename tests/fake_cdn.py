@@ -80,10 +80,8 @@ def _pkg_ver(body: str) -> tuple[str, str]:
 
 
 def _packument(name: str) -> dict:
-    return {
-        "versions": [{"version": v} for v in VERSION_LISTS[name]],
-        "tags": {"latest": VERSIONS[name]},
-    }
+    # the singular /v1/package/npm endpoint returns versions as plain strings
+    return {"versions": VERSION_LISTS[name], "tags": {"latest": VERSIONS[name]}}
 
 
 async def fake_get_json(url: str) -> dict:
