@@ -59,7 +59,7 @@ def _store_group(deps, package: str, version: str, subpaths: list[str], root: bo
         return
     table = tomlkit.inline_table()
     table["version"] = version
-    table["subpaths"] = subpaths
+    table["subpaths"] = sorted(subpaths)
     if root:
         table["root"] = True
     deps[package] = table
@@ -151,7 +151,20 @@ def _ensure_deps(doc):
     return node
 
 
+def _sort_deps(deps) -> None:
+    """Reorder the dependency table alphabetically by package key. Standalone
+    comments survive (they migrate to the top of the table)."""
+    items = sorted(deps.items(), key=lambda kv: kv[0])
+    for key in [k for k, _ in items]:
+        del deps[key]
+    for key, val in items:
+        deps[key] = val
+
+
 def _save(pyproject: Path, doc) -> None:
+    deps = _get_deps(doc)
+    if deps is not None:
+        _sort_deps(deps)
     tmp = pyproject.with_name(f".{pyproject.name}.tmp.{os.getpid()}")
     tmp.write_text(tomlkit.dumps(doc), encoding="utf-8")
     os.replace(tmp, pyproject)

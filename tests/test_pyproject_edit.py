@@ -56,6 +56,21 @@ def test_add_into_existing_section_preserves_comments(tmp_path):
     assert "# keep me" in p.read_text()
 
 
+def test_dependencies_kept_sorted(tmp_path):
+    p = _proj(
+        tmp_path,
+        """
+        [tool.pyesm.dependencies]
+        react = "^18.2.0"
+    """,
+    )
+    add_dependency(p, "zebra", "1")
+    add_dependency(p, "lit", "3")
+    add_subpath_dependency(p, "@codemirror/state", "^6.0.0", "x")
+    keys = list(_deps(p))  # tomllib preserves file order
+    assert keys == sorted(keys) == ["@codemirror/state", "lit", "react", "zebra"]
+
+
 def test_add_updates_existing_key(tmp_path):
     p = _proj(
         tmp_path,
@@ -127,7 +142,7 @@ def test_add_subpath_creates_and_merges_inline_table(tmp_path):
     add_subpath_dependency(p, "@codemirror/legacy-modes", "", "mode/lua")  # merge, keep version
     add_subpath_dependency(p, "@codemirror/legacy-modes", "", "mode/toml")  # dedup
     dep = _deps(p)["@codemirror/legacy-modes"]
-    assert dep == {"version": "^6.5.3", "subpaths": ["mode/toml", "mode/lua"]}
+    assert dep == {"version": "^6.5.3", "subpaths": ["mode/lua", "mode/toml"]}  # sorted
     assert _deps(p)["react"] == "^18.2.0"  # string deps untouched
 
 

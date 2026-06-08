@@ -89,7 +89,7 @@ def test_add_subpaths_group_into_inline_table(in_project):
     deps = tomllib.loads((in_project / "pyproject.toml").read_text())["tool"]["pyesm"][
         "dependencies"
     ]
-    assert deps["scheduler"] == {"version": "^0.23.2", "subpaths": ["foo", "bar"]}
+    assert deps["scheduler"] == {"version": "^0.23.2", "subpaths": ["bar", "foo"]}  # sorted
     # both subpath specifiers are in the lock's imports, one shared package version
     lock = json.loads((in_project / "pyesm.lock").read_text())
     assert "scheduler/foo" in lock["imports"]

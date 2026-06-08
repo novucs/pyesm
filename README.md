@@ -109,7 +109,7 @@ lit         = "3"
 "htmx.org"  = "2"
 
 # multiple subpaths of one package, one shared version (one vendored copy):
-lodash-es = { version = "^4.17.21", subpaths = ["debounce", "throttle", "cloneDeep"] }
+lodash-es = { version = "^4.17.21", subpaths = ["cloneDeep", "debounce", "throttle"] }
 ```
 
 `pyesm add lodash-es/debounce` writes/merges that grouped table for you; plain packages stay in the
