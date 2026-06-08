@@ -33,7 +33,7 @@ def make_client(concurrency: int = 16):
 def strip_source_map(raw: bytes) -> bytes:
     """Drop a trailing external source-map comment from a fetched module.
 
-    CDN ``+esm`` bundles end with ``//# sourceMappingURL=/sm/<hash>.map`` — a
+    CDN ``+esm`` bundles end with ``//# sourceMappingURL=/sm/<hash>.map``, a
     CDN-only path that 404s once the module is self-hosted. Stripping it (rather
     than vendoring an unreachable map) keeps the browser console clean. Applied
     at every module fetch so the integrity hash is taken over the served bytes.
@@ -44,9 +44,9 @@ def strip_source_map(raw: bytes) -> bytes:
 def strip_jsdelivr_banner(raw: bytes) -> bytes:
     """Drop jsDelivr's leading ``+esm`` build banner.
 
-    It carries volatile build-tool versions (``Rollup vX … Terser vY``) — which
+    It carries volatile build-tool versions (``Rollup vX, Terser vY``), which
     would churn the integrity hash on every jsDelivr toolchain bump even when the
-    code is unchanged — plus a "Do NOT use SRI with dynamically generated files"
+    code is unchanged, plus a "Do NOT use SRI with dynamically generated files"
     notice that applies to loading from the CDN, not to a self-hosted frozen copy.
     Only jsDelivr's own banner is removed, never a package's license header.
     """

@@ -72,7 +72,7 @@ async def sync_async(
         else:
             report.downloaded += 1
 
-    # Phase 2: all bytes are cached and verified — now mutate output_dir.
+    # Phase 2: all bytes are cached and verified; now mutate output_dir.
     output_dir.mkdir(parents=True, exist_ok=True)
     expected = {item.path for item, _, _ in ensured} | set(protect)
     for path in sorted(output_dir.rglob("*"), reverse=True):

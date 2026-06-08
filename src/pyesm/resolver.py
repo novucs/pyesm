@@ -115,7 +115,7 @@ class _NpmProvider(AbstractProvider):
 async def _prewarm(roots, packument, manifest, concurrency: int) -> None:
     """Best-effort concurrent BFS over the dependency closure to fill the
     packument/manifest caches before resolvelib's serial exploration. Per-package
-    errors are swallowed — resolvelib lazily fetches (and surfaces) any miss."""
+    errors are swallowed; resolvelib lazily fetches (and surfaces) any miss."""
     sem = asyncio.Semaphore(concurrency)
     seen: set[str] = set()
 
@@ -189,7 +189,7 @@ async def resolve_graph(
     except ResolutionTooDeep as exc:
         raise ResolveError(
             f"could not resolve dependencies: resolution did not settle after "
-            f"{exc.round_count} rounds — the constraints are likely contradictory"
+            f"{exc.round_count} rounds; the constraints are likely contradictory"
         ) from exc
 
 

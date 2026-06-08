@@ -15,7 +15,7 @@ from .base import Provider
 ORIGIN = "https://cdn.jsdelivr.net"
 DATA_API = "https://data.jsdelivr.com/v1/packages/npm"
 # The singular endpoint returns versions as plain strings (no per-version
-# `links`), ~10x smaller than the plural one — all the resolver needs.
+# `links`), ~10x smaller than the plural one and all the resolver needs.
 DATA_API_PKG = "https://data.jsdelivr.com/v1/package/npm"
 
 # Characters that mean a value is a range/tag rather than an exact version.

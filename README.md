@@ -1,84 +1,66 @@
 # pyesm
 
-A fast, Python-native, **npm-free** tool that reads ESM dependencies from `pyproject.toml`,
-vendors the compiled module graph from a CDN into a local static directory, and emits a standard
-**import map** with **Subresource Integrity (SRI)** on by default.
+**Use modern JavaScript libraries in a Python web app, without Node, npm, a bundler, or a CDN dependency at runtime.**
 
-- **No Node, no npm, no bundler.** Pure Python: `pip install pyesm` (or `uv add pyesm`) and go.
-- **Framework-agnostic core** writes a static `importmap.json` + vendored files.
-- **Optional Django integration** renders the import map through `staticfiles` storage at request
-  time, so it survives `ManifestStaticFilesStorage` / WhiteNoise filename hashing.
-- Deterministic, lockfile-driven, SRI on by default.
+You want a JS library (React, lit, htmx, Alpine, CodeMirror) in a site with a Python backend. The
+usual options are to load it from a CDN at runtime (now your site depends on that CDN being up, fast,
+and untampered, and it breaks offline) or to stand up a whole Node + npm + bundler toolchain just to
+ship a few `.js` files.
 
----
+pyesm is a third way. Declare the library in `pyproject.toml`, run one command, and pyesm downloads the
+compiled ES modules (the *entire* dependency graph) into your static directory and writes a standard
+[import map](https://developer.mozilla.org/en-US/docs/Web/HTML/Element/script/type/importmap). You
+serve your own files: nothing hits a CDN at runtime, it works offline, and the whole thing is pinned by
+a lockfile and checked with Subresource Integrity.
 
-## Install
+- **Pure Python, no Node.** `pip install pyesm` with no Node toolchain, no `node_modules`, no bundler, no compiled extensions.
+- **Vendors the whole graph.** A real backtracking npm-semver resolver picks one version per package and downloads every module locally, deduped to a single copy.
+- **Standard import maps.** Emits a plain `importmap.json` the browser understands natively, so `import "react"` just works. Framework-agnostic.
+- **Locked & reproducible.** A committed `pyesm.lock` makes `sync` deterministic and offline; every file carries a `sha384`, re-verified on every sync.
+- **Optional Django integration** that survives `ManifestStaticFilesStorage` / WhiteNoise filename hashing.
 
-```console
-$ pip install pyesm           # or: uv add pyesm
-$ pip install "pyesm[django]" # with the optional Django integration
-```
-
-- **Python 3.12+.**
-- Four pure-Python runtime dependencies — `httpx` (async HTTP), `tomlkit` (comment-preserving
-  `pyproject.toml` edits), and `semantic-version` + `resolvelib` (npm-range dependency resolution).
-  Three are zero-dependency; only `httpx` pulls a transitive stack (httpcore/anyio/certifi). **No Node
-  toolchain and no compiled extensions, ever.**
+Requires Python 3.12+. Four pure-Python dependencies (`httpx`, `tomlkit`, `semantic-version`,
+`resolvelib`); only `httpx` pulls a transitive stack.
 
 ---
 
 ## Quick start
 
 ```console
-$ pyesm add react@^18.2.0 react-dom@^18.2.0   # resolve, lock, vendor, and write the import map
+$ pip install pyesm
+$ pyesm add react@^18.2.0 react-dom@^18.2.0   # resolve → lock → download → write the import map
 ```
+
+Reference the generated import map and import as normal:
 
 ```html
 <script type="importmap" src="/static/pyesm/importmap.json"></script>
 <script type="module">import "react"</script>
 ```
 
-That's it: `react` (and its whole module graph) now loads from your own static files, with
-integrity enforced and zero requests to the CDN at runtime. (Drop the `@range` to take the latest.)
-
-Already have deps in `pyproject.toml`? Skip `add` and run `pyesm sync`.
+That's it: `react` and its whole module graph now load from your own static files, with zero requests
+to a CDN at runtime. Omit the `@range` to take the latest; already have deps in `pyproject.toml`? Skip
+`add` and run `pyesm sync`.
 
 ---
 
 ## How it works
 
-The design follows four load-bearing decisions:
+`pyesm add react` runs four steps, all reproducible from the lockfile afterward:
 
-1. **pyesm resolves the dependency graph (one version per package).** It reads each package's
-   `package.json` dependency ranges and runs a real **backtracking** resolver (`resolvelib`, pip's
-   resolver, with `semantic-version` for npm ranges) to pick, for every package, a single version
-   satisfying *all* constraints — backtracking off a "latest" choice when an earlier version of an
-   intermediate package is needed to satisfy something downstream. When it crawls the module graph it
-   rewrites each bundle's version-pinned imports to the resolved version, so shared transitive deps
-   collapse to **one** vendored copy instead of the many the CDN's independently-pinned bundles would
-   produce. A graph with no solution (e.g. react 17 vs 18) is a hard error and changes nothing, so you
-   always get a consistent 1:1 import mapping or a clean failure.
-2. **Relocate via the import map, never by editing bytes.** CDN-built ESM references sibling modules
-   by *root-relative* path (e.g. `/npm/react@18.3.1/+esm`). pyesm adds each such specifier to the
-   import map as a key pointing at the local vendored copy. The browser resolves the specifier against
-   your site's origin and the map transparently redirects it to the local file. Vendored `.js` is
-   written as fetched, except that two pieces of CDN-injected boilerplate are dropped: the trailing
-   `//# sourceMappingURL=…` comment (a CDN-only `/sm/…` path that 404s once self-hosted; inline `data:`
-   maps are kept), and jsDelivr's leading build banner (volatile `Rollup vX … Terser vY` versions that
-   would needlessly churn the integrity hash, plus a "do not use SRI" notice aimed at dynamic CDN
-   loading, not self-hosted copies). A package's own `/*! @license … */` header is never touched, and
-   cross-module imports are never rewritten — the import map is the only relocation layer.
-3. **No fragile relative edges.** Because cross-module references are absolute (root-relative) paths,
-   the import map is the single indirection layer; there is nothing to rewrite inside the files.
-4. **Integrity is computed over the vendored bytes.** Every module gets a `sha384` stored in the lock;
-   `sync` recomputes and verifies on every run and **fails loudly** on mismatch (the CDN changed bytes
-   under a pinned URL) rather than silently overwriting. By default the import map also carries an SRI
-   `integrity` entry for every URL (opt out with `integrity = false`). Because the content is fixed at
-   vendor time and never rewritten afterward, the hash stays valid even when
-   `ManifestStaticFilesStorage` renames the *file*.
-
-A **global content-addressed cache** (`~/.cache/pyesm/<hash>`) is shared across all projects;
-identical modules are downloaded once, ever, and hardlinked into each project's output directory.
+1. **Resolve.** Reads each package's `package.json` ranges and runs a real **backtracking** resolver
+   (`resolvelib` + `semantic-version` for npm semver) to choose one version per package satisfying
+   every constraint, so shared transitive dependencies collapse to a single copy. An unsatisfiable
+   graph (e.g. react 17 vs 18) is a clean error that changes nothing.
+2. **Vendor.** Downloads the compiled ESM for the entire graph from a CDN (jsDelivr's `+esm` by
+   default) into `output-dir`. Files are content-addressed in a shared global cache
+   (`~/.cache/pyesm/<hash>`) and hardlinked into place, so identical modules download once, ever.
+3. **Remap.** CDN modules reference their siblings by absolute path (`/npm/react@18.3.1/+esm`); pyesm
+   points each of those at the local copy through the import map. It never rewrites the imports inside
+   the files (the import map is the only indirection), so a module's bytes don't depend on what else
+   you vendor.
+4. **Verify.** Each module's `sha384` is written to the lock and the import map, and `sync` re-checks
+   it on every run, **failing loudly** if a CDN ever serves different bytes under a pinned URL.
 
 ---
 
@@ -98,7 +80,7 @@ All configuration lives under `[tool.pyesm]` in `pyproject.toml`.
 | `integrity`   | `true`                          | Emit the SRI `integrity` block in the import map.                        |
 
 Dependencies go in a separate table. Keys containing dots, slashes, or scopes must be quoted. Each
-value is a version range; the key is what you `import`. Deep imports work too — list a package's
+value is a version range; the key is what you `import`. Deep imports work too: list a package's
 subpaths under one entry so they share a single pinned version:
 
 ```toml
@@ -188,7 +170,7 @@ however you like:
 There are two distinct integrity layers, and only the first is unconditional:
 
 - **At vendor time**, every module's `sha384` is stored in the lock and re-verified by `sync` on every
-  run (it **fails loudly** on mismatch). This always holds — it's what guarantees the bytes you ship
+  run (it **fails loudly** on mismatch). This always holds; it's what guarantees the bytes you ship
   are the bytes you locked.
 - **In the browser**, the import map's `integrity` field is enforced only where the runtime understands
   it. Recent Chromium enforces it natively; browsers that have import maps but not native import-map
@@ -198,7 +180,7 @@ pyesm can vendor and inject the [es-module-shims](https://github.com/guybedford/
 polyfill to extend runtime enforcement, controlled by `shims`:
 
 - `auto` (default) / `always`: vendor and inject the polyfill. It enforces integrity only when it
-  actually takes over module loading — on browsers with **no** native import-map support (where it
+  actually takes over module loading: on browsers with **no** native import-map support (where it
   fully engages), or in its opt-in "shim mode". On a browser that already has native import maps but
   not native integrity, the polyfill stays out of the native loader's way, so there the `integrity`
   field stays **advisory**. In other words the polyfill closes the gap for older browsers, not for
@@ -215,7 +197,11 @@ emitted for you; in static mode reference the vendored file yourself
 
 ## Django integration
 
-Add the app to your settings:
+Install the extra and add the app to your settings:
+
+```console
+$ pip install "pyesm[django]"
+```
 
 ```python
 INSTALLED_APPS = [
@@ -285,9 +271,9 @@ $ pyesm sync --offline    # fail rather than touch the network (requires a warm 
 No provider requires Node. (JSPM is intentionally excluded: its generator is Node-only.)
 
 - **`jsdelivr`** (default): vendors transformed ESM from `cdn.jsdelivr.net/npm/<name>@<ver>/+esm`.
-  pyesm resolves the whole dependency graph itself (decision 1) — enumerating versions from jsDelivr's
-  data API and reading each `package.json` — then vendors exactly those resolved versions, deduped to
-  one copy per package.
+  pyesm resolves the whole dependency graph itself (the *Resolve* step above), enumerating versions
+  from jsDelivr's data API and reading each `package.json`, then vendors exactly those resolved
+  versions, deduped to one copy per package.
 - **`esmsh`**: vendors from `esm.sh`, which pins a range by redirect. Its entry URLs aren't
   version-pinned in the path, so pyesm follows the redirect and vendors the frozen re-export shim plus
   its pinned target. esm.sh dedupes its graph server-side, so pyesm doesn't run its own resolver for
