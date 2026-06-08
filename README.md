@@ -244,23 +244,28 @@ INSTALLED_APPS = [
 ]
 ```
 
-Render the map at request time with the template tag:
+Render the import map (and CSS `<link>`s) at request time with the template tags:
 
 ```django
 {% load pyesm %}
 <head>
-  {% pyesm_importmap %}   {# emits <script type="importmap">…</script>, plus the shims tag per `shims` #}
+  {% pyesm_stylesheets %}   {# emits a <link rel="stylesheet"> per CSS dependency #}
+  {% pyesm_importmap %}     {# emits <script type="importmap">…</script>, plus the shims tag per `shims` #}
 </head>
 
 <script type="module">import "react"</script>
 ```
 
-Why request-time instead of a static file: the tag routes **only the values** through
-`staticfiles_storage.url("pyesm/<path>")`, so the rendered map contains the storage-hashed URL
-(e.g. `/static/pyesm/react@18.3.1/+esm.4af3.js`). This makes it survive
-`ManifestStaticFilesStorage` and WhiteNoise filename hashing. The `integrity` values come straight
-from the lock and stay valid because the vendored content is never rewritten. The rendered map is cached per
-process and invalidated when the staticfiles manifest changes.
+`{% pyesm_importmap %}` renders the import map for your JS dependencies; `{% pyesm_stylesheets %}`
+renders one `<link>` per `.css` dependency (omit it if you have none). Both are optional and independent.
+
+Why request-time instead of static files: the tags route **only the URLs** through
+`staticfiles_storage.url("pyesm/<path>")`, so the rendered output contains storage-hashed URLs
+(e.g. `/static/pyesm/react@18.3.1/+esm.4af3.js`). This makes them survive `ManifestStaticFilesStorage`
+and WhiteNoise filename hashing. For the import map, the `integrity` values come straight from the lock
+and stay valid because the vendored JS content is never rewritten; the `<link>` tags carry no SRI
+because `ManifestStaticFilesStorage` rewrites CSS during `collectstatic` (see *CSS dependencies*). The
+rendered output is cached per process and invalidated when the staticfiles manifest changes.
 
 A typical deploy is `pyesm sync` → `collectstatic`.
 
