@@ -59,9 +59,8 @@ async def sync_async(
         async with http.make_client(concurrency) as client:
 
             async def dl(url: str) -> bytes:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.content
+                _, raw = await http.get_module(client, url)
+                return raw
 
             ensured = await _ensure_cached(items, cache, dl, offline, concurrency)
     else:

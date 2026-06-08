@@ -103,6 +103,15 @@ def test_add_subpaths_group_into_inline_table(in_project):
     assert deps["scheduler"]["subpaths"] == ["bar"]
 
 
+def test_vendored_module_has_no_external_source_map(in_project):
+    # the fake scheduler bundle ends with `//# sourceMappingURL=/sm/…`; vendoring
+    # through the real fetch path must strip it (it would 404 when self-hosted).
+    assert main(["add", "scheduler"]) == 0
+    js = (in_project / "static/pyesm/scheduler@0.23.2/+esm.js").read_text()
+    assert "sourceMappingURL" not in js
+    assert main(["--frozen", "sync"]) == 0  # integrity still matches (hash over served bytes)
+
+
 def test_add_root_then_subpath_keeps_both_imports(in_project):
     # `pyesm add scheduler` then `pyesm add scheduler/foo` must import BOTH the
     # bare package and the subpath (regression: the root used to be dropped).

@@ -62,14 +62,18 @@ The design follows four load-bearing decisions:
    by *root-relative* path (e.g. `/npm/react@18.3.1/+esm`). pyesm adds each such specifier to the
    import map as a key pointing at the local vendored copy. The browser resolves the specifier against
    your site's origin and the map transparently redirects it to the local file. Vendored `.js` is
-   written byte-for-byte as fetched.
+   written as fetched, with one exception: a trailing `//# sourceMappingURL=…` comment is stripped,
+   because CDN `+esm` bundles point it at a CDN-only `/sm/…` path that 404s once self-hosted (inline
+   `data:` maps are kept). Cross-module imports are never rewritten — the import map is the only
+   relocation layer.
 3. **No fragile relative edges.** Because cross-module references are absolute (root-relative) paths,
    the import map is the single indirection layer; there is nothing to rewrite inside the files.
 4. **Integrity is computed over the vendored bytes.** Every module gets a `sha384` stored in the lock;
    `sync` recomputes and verifies on every run and **fails loudly** on mismatch (the CDN changed bytes
    under a pinned URL) rather than silently overwriting. By default the import map also carries an SRI
-   `integrity` entry for every URL (opt out with `integrity = false`). Because bytes are never edited,
-   the hash stays valid even when `ManifestStaticFilesStorage` renames the *file*.
+   `integrity` entry for every URL (opt out with `integrity = false`). Because the content is fixed at
+   vendor time and never rewritten afterward, the hash stays valid even when
+   `ManifestStaticFilesStorage` renames the *file*.
 
 A **global content-addressed cache** (`~/.cache/pyesm/<hash>`) is shared across all projects;
 identical modules are downloaded once, ever, and hardlinked into each project's output directory.
@@ -179,14 +183,24 @@ however you like:
 
 ### es-module-shims and cross-browser SRI
 
-Native import-map `integrity` shipped in Chromium and Safari, but not everywhere; browsers that don't
-understand the `integrity` key silently ignore it and load modules **unverified**. To enforce SRI
-everywhere, pyesm can inject the [es-module-shims](https://github.com/guybedford/es-module-shims)
-polyfill, controlled by `shims`:
+There are two distinct integrity layers, and only the first is unconditional:
 
-- `auto` (default): vendor and inject the polyfill so integrity is enforced even where the browser
-  wouldn't.
-- `always`: same as auto.
+- **At vendor time**, every module's `sha384` is stored in the lock and re-verified by `sync` on every
+  run (it **fails loudly** on mismatch). This always holds — it's what guarantees the bytes you ship
+  are the bytes you locked.
+- **In the browser**, the import map's `integrity` field is enforced only where the runtime understands
+  it. Recent Chromium enforces it natively; browsers that have import maps but not native import-map
+  integrity (currently Firefox and Safari) **ignore** the field and load those modules unverified.
+
+pyesm can vendor and inject the [es-module-shims](https://github.com/guybedford/es-module-shims)
+polyfill to extend runtime enforcement, controlled by `shims`:
+
+- `auto` (default) / `always`: vendor and inject the polyfill. It enforces integrity only when it
+  actually takes over module loading — on browsers with **no** native import-map support (where it
+  fully engages), or in its opt-in "shim mode". On a browser that already has native import maps but
+  not native integrity, the polyfill stays out of the native loader's way, so there the `integrity`
+  field stays **advisory**. In other words the polyfill closes the gap for older browsers, not for
+  current Firefox/Safari.
 - `never`: don't vendor or inject.
 
 The polyfill is **vendored** like every other file: downloaded once (at lock/sync) from the
@@ -223,7 +237,7 @@ Why request-time instead of a static file: the tag routes **only the values** th
 `staticfiles_storage.url("pyesm/<path>")`, so the rendered map contains the storage-hashed URL
 (e.g. `/static/pyesm/react@18.3.1/+esm.4af3.js`). This makes it survive
 `ManifestStaticFilesStorage` and WhiteNoise filename hashing. The `integrity` values come straight
-from the lock and stay valid because the bytes are never edited. The rendered map is cached per
+from the lock and stay valid because the vendored content is never rewritten. The rendered map is cached per
 process and invalidated when the staticfiles manifest changes.
 
 A typical deploy is `pyesm sync` → `collectstatic`.
@@ -288,6 +302,10 @@ Switch per-run with `--provider`, or set `provider` in config.
   *is* discovered.
 - **`outdated` is a no-op for esm.sh** deps, because esm.sh entry URLs don't pin a version in the URL
   to compare against. jsDelivr pins exactly and reports accurately.
+- **Runtime SRI enforcement is browser-dependent.** The `integrity` field is always emitted (and
+  always verified at vendor time), but the browser only *enforces* it natively on recent Chromium; on
+  Firefox/Safari (import maps, no native integrity) the field is advisory, and the es-module-shims
+  polyfill only covers browsers without native import maps. See *es-module-shims and cross-browser SRI*.
 - CDN output (`+esm`, esm.sh transforms) is **not guaranteed byte-stable** across CDN updates. That's
   fine at serve time because you host your own frozen copy, but a `sync` that finds a hash mismatch
   against a still-pinned URL **fails loudly** rather than silently overwriting.

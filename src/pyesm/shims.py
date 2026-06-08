@@ -1,7 +1,10 @@
 """es-module-shims, controlled by the ``shims`` setting:
 
-* ``auto`` (default) / ``always`` -> vendor the polyfill and inject it, so
-  import-map ``integrity`` is enforced even on browsers without native support.
+* ``auto`` (default) / ``always`` -> vendor the polyfill and inject it. It
+  extends import-map ``integrity`` enforcement to browsers with no native
+  import-map support (where the polyfill fully engages); on browsers that have
+  import maps but not native integrity (Firefox/Safari) the field stays
+  advisory, since the polyfill defers to the native loader there.
 * ``never`` -> do not vendor or inject.
 
 The polyfill is vendored locally (from the configured provider) and served from
@@ -10,7 +13,7 @@ The polyfill is vendored locally (from the configured provider) and served from
 
 from __future__ import annotations
 
-ESMS_VERSION = "1.10.0"
+ESMS_VERSION = "2.8.1"
 
 
 def should_inject(setting: str) -> bool:

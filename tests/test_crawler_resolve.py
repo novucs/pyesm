@@ -106,7 +106,7 @@ def test_resolve_vendors_shim_from_provider_when_enabled(config):
     lock = resolve(config, fetch=RecordingFetch().crawl, get_json=fake_get_json)
     assert lock.shims is not None
     assert lock.shims.url.startswith("https://cdn.jsdelivr.net/npm/es-module-shims@")
-    assert lock.shims.path == "es-module-shims@1.10.0.js"
+    assert lock.shims.path == "es-module-shims@2.8.1.js"
     assert lock.shims.integrity.startswith("sha384-")
 
 

@@ -33,9 +33,7 @@ async def resolve_async(
         async with http.make_client(config.concurrency) as client:
 
             async def f(url: str) -> tuple[str, bytes]:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return str(resp.url), resp.content
+                return await http.get_module(client, url)
 
             async def gj(url: str) -> dict:
                 resp = await client.get(url)

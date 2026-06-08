@@ -17,7 +17,8 @@ J = "https://cdn.jsdelivr.net"
 # Module bodies. react-dom references its siblings by *root-relative* path,
 # exactly like real jsDelivr +esm output.
 REACT = b'export default {name:"react"};'
-SCHEDULER = b'export default {name:"scheduler"};'
+# trailing source-map comment, as jsDelivr appends; stripped at fetch time
+SCHEDULER = b'export default {name:"scheduler"};\n//# sourceMappingURL=/sm/abc123.map'
 REACT_DOM = (
     b'import e from"/npm/react@18.2.0/+esm";'
     b'import n from"/npm/scheduler@0.23.2/+esm";'
