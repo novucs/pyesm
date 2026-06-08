@@ -148,7 +148,7 @@ The single entry point is `pyesm`. Running it bare prints help.
 | `pyesm sync` (alias `install`) | only if cold | Make local files + import map match the lock; download missing modules and verify every integrity. **Offline & near-instant when the cache is warm.** |
 | `pyesm build`                  | no           | (Re)emit the static `importmap.json` from the lock.                                                                                                   |
 | `pyesm clean`                  | no           | Remove the contents of `output-dir` (keeps the lock).                                                                                                 |
-| `pyesm outdated`               | yes          | Report deps whose range now resolves to a newer pinned version.                                                                                       |
+| `pyesm outdated [--latest]`    | yes          | Report deps whose locked version is behind. By default compares against the newest *within* each range; `--latest` compares against the absolute newest, surfacing updates *outside* your range (e.g. new majors). |
 
 `add` accepts version ranges inline, scope-aware:
 

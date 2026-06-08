@@ -348,8 +348,11 @@ def cmd_outdated(args, ctx: _Ctx) -> int:
                 return resp.json()
 
             async def one(pkg, rng):
+                # --latest ignores the declared range (empty spec -> absolute
+                # latest), surfacing updates the range doesn't allow.
+                spec = "" if args.latest else rng
                 try:
-                    return pkg, await provider.resolve_version(pkg, rng, get_json=get_json)
+                    return pkg, await provider.resolve_version(pkg, spec, get_json=get_json)
                 except Exception:  # best-effort: unresolved/unsupported -> unknown
                     return pkg, None
 
@@ -357,16 +360,18 @@ def cmd_outdated(args, ctx: _Ctx) -> int:
 
     newest = asyncio.run(newest_all())
 
+    label = "latest" if args.latest else "newest"
     rows = [
         (pkg, locked.get(pkg, "?"), newest.get(pkg) or "?")
         for pkg in sorted(ranges)
         if (newest.get(pkg) or "?") != locked.get(pkg, "?")
     ]
     if not rows:
-        ctx.info("all dependencies are up to date")
+        scope = "available" if args.latest else "within range"
+        ctx.info(f"all dependencies are up to date ({scope})")
     else:
         for pkg, cur, new in rows:
-            ctx.info(f"{pkg}\n  locked:  {cur}\n  newest:  {new}")
+            ctx.info(f"{pkg}\n  locked:  {cur}\n  {label}:  {new}")
     return 0
 
 
@@ -419,9 +424,14 @@ def _build_parser() -> argparse.ArgumentParser:
         handler=cmd_clean
     )
 
-    sub.add_parser("outdated", help="report deps that now resolve to a newer pin").set_defaults(
-        handler=cmd_outdated
+    p_outdated = sub.add_parser("outdated", help="report deps that now resolve to a newer pin")
+    p_outdated.add_argument(
+        "--latest",
+        action="store_true",
+        help="compare against the absolute latest version, ignoring the declared range "
+        "(surfaces updates outside your range, e.g. new majors)",
     )
+    p_outdated.set_defaults(handler=cmd_outdated)
 
     return parser
 

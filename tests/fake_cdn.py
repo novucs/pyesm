@@ -75,8 +75,12 @@ GRAPH: dict[str, tuple[str, bytes]] = {
     ),
 }
 
-# What the jsDelivr data API resolves each package name to (range -> latest).
+# What the jsDelivr data API resolves a *range* to (the resolve?specifier= path).
 VERSIONS = {"react": "18.2.0", "react-dom": "18.2.0", "scheduler": "0.23.2", "widget": "1.0.0"}
+
+# The absolute latest (the resolve path with no specifier), for `outdated --latest`.
+# react has a newer major outside the projects' "^18.2.0" range.
+LATEST = {"react": "19.1.0"}
 
 # Published version lists (for the backtracking resolver's enumeration).
 VERSION_LISTS = {
@@ -115,8 +119,12 @@ async def fake_get_json(url: str) -> dict:
         pkg, ver = _pkg_ver(body)
         return MANIFESTS.get((pkg, ver), {})
     after = url.split("/npm/", 1)[1]
-    if "/resolved" in after:  # .../npm/<name>/resolved?specifier=...
-        return {"version": VERSIONS[after.split("/resolved", 1)[0]]}
+    if "/resolved" in after:  # .../npm/<name>/resolved[?specifier=...]
+        name = after.split("/resolved", 1)[0]
+        # no specifier -> absolute latest (what `outdated --latest` asks for)
+        if "specifier=" in url:
+            return {"version": VERSIONS[name]}
+        return {"version": LATEST.get(name, VERSIONS[name])}
     return _packument(after)  # .../npm/<name> -> version list + tags
 
 
@@ -160,7 +168,10 @@ def mock_client(concurrency: int = 16):
         if request.url.host == "data.jsdelivr.com":
             after = path.split("/npm/", 1)[1]
             if after.endswith("/resolved"):
-                return httpx.Response(200, json={"version": VERSIONS[after[: -len("/resolved")]]})
+                name = after[: -len("/resolved")]
+                # no specifier query -> absolute latest (outdated --latest)
+                version = VERSIONS[name] if request.url.query else LATEST.get(name, VERSIONS[name])
+                return httpx.Response(200, json={"version": version})
             return httpx.Response(200, json=_packument(after))  # version list
         if path.endswith("/package.json"):
             pkg, ver = _pkg_ver(path.split("/npm/", 1)[1][: -len("/package.json")])

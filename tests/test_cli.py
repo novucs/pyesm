@@ -173,6 +173,17 @@ def test_outdated_up_to_date(in_project, capsys):
     assert "up to date" in capsys.readouterr().out
 
 
+def test_outdated_latest_flag_surfaces_out_of_range(in_project, capsys):
+    # the fake reports react's absolute latest as 19.1.0, outside the ^18.2.0 range
+    assert main(["lock"]) == 0
+    assert main(["outdated"]) == 0
+    assert "up to date (within range)" in capsys.readouterr().out  # nothing within range
+
+    assert main(["outdated", "--latest"]) == 0
+    out = capsys.readouterr().out
+    assert "react\n  locked:  18.2.0\n  latest:  19.1.0" in out
+
+
 def test_remove_reresolves(in_project):
     assert main(["sync"]) == 0
     assert main(["remove", "react-dom"]) == 0
